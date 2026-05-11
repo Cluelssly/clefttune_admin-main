@@ -1,0 +1,1 @@
+{"flutter":{"platforms":{"android":{"default":{"projectId":"clefttune","appId":"1:1024421100650:android:10462461ccf196b7cc9e13","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"clefttune","configurations":{"android":"1:1024421100650:android:10462461ccf196b7cc9e13","web":"1:1024421100650:web:ff4ade250354650ecc9e13"}}}}}}

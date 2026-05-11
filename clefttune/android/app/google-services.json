@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1024421100650",
+    "project_id": "appcleft2026-55337",
+    "storage_bucket": "appcleft2026-55337.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1024421100650:android:10462461ccf196b7cc9e13",
+        "android_client_info": {
+          "package_name": "com.example.clefttune_admin"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAdIfd550LzzAuTTaXBiAipK7ObD7biR08"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
