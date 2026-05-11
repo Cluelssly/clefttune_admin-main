@@ -29,6 +29,14 @@ const kBlue = Color(0xFF2D9CFF);
 const kPremiumPrice = 99;
 
 // ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+bool _isPremium(Map<String, dynamic> data) {
+  final sub = (data['subscription'] ?? '').toString().toLowerCase().trim();
+  return sub == 'premium';
+}
+
+// ─────────────────────────────────────────────
 // APP
 // ─────────────────────────────────────────────
 class CleftTuneAdminApp extends StatelessWidget {
@@ -147,10 +155,12 @@ class _AppStats {
     required this.income,
   });
 
-  factory _AppStats.from(List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+  factory _AppStats.from(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
     final total = docs.length;
-    final free = docs.where((d) => d.data()['subscription'] == 'free').length;
-    final premium = docs.where((d) => d.data()['subscription'] == 'premium').length;
+    // FIX: count premium using helper; everyone else is free
+    final premium = docs.where((d) => _isPremium(d.data())).length;
+    final free = total - premium;
     return _AppStats(
       total: total,
       free: free,
@@ -253,13 +263,15 @@ class _SidebarTile extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           child: Row(
             children: [
-              Icon(icon, color: selected ? kAccent : Colors.white38, size: 20),
+              Icon(icon,
+                  color: selected ? kAccent : Colors.white38, size: 20),
               const SizedBox(width: 12),
               Text(
                 label,
                 style: TextStyle(
                   color: selected ? kAccent : Colors.white60,
-                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                  fontWeight:
+                      selected ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
               if (selected) ...[
@@ -290,10 +302,25 @@ class DashboardPage extends StatelessWidget {
 
   const DashboardPage({super.key, required this.stats, required this.docs});
 
+  /// Sort docs by createdAt descending, fall back to Firestore order.
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _sortedByRecent() {
+    final sorted = [...docs];
+    sorted.sort((a, b) {
+      final aTime = a.data()['createdAt'];
+      final bTime = b.data()['createdAt'];
+      if (aTime == null && bTime == null) return 0;
+      if (aTime == null) return 1;
+      if (bTime == null) return -1;
+      return (bTime as Timestamp).compareTo(aTime as Timestamp);
+    });
+    return sorted;
+  }
+
   @override
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
-    final recentUsers = docs.take(5).toList();
+    // FIX: show 5 most recently created users
+    final recentUsers = _sortedByRecent().take(5).toList();
 
     return SingleChildScrollView(
       padding: EdgeInsets.symmetric(
@@ -331,14 +358,16 @@ class DashboardPage extends StatelessWidget {
                   title: 'Free Users',
                   value: '${stats.free}',
                   icon: Icons.star_rounded,
-                  subtitle: '${(stats.freePercent * 100).toStringAsFixed(1)}%',
+                  subtitle:
+                      '${(stats.freePercent * 100).toStringAsFixed(1)}%',
                   iconColor: kPurple,
                 ),
                 _StatCard(
                   title: 'Premium Users',
                   value: '${stats.premium}',
                   icon: Icons.diamond_rounded,
-                  subtitle: '${(stats.premiumPercent * 100).toStringAsFixed(1)}%',
+                  subtitle:
+                      '${(stats.premiumPercent * 100).toStringAsFixed(1)}%',
                   iconColor: kBlue,
                 ),
                 _StatCard(
@@ -410,7 +439,9 @@ class DashboardPage extends StatelessWidget {
                 SizedBox(
                   height: 100,
                   width: double.infinity,
-                  child: CustomPaint(painter: _LineChartPainter()),
+                  child: CustomPaint(
+                      painter: _LineChartPainter(
+                          premiumCount: stats.premium)),
                 ),
               ],
             ),
@@ -431,14 +462,15 @@ class DashboardPage extends StatelessWidget {
                 if (recentUsers.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 12),
-                    child: Text('No users found.', style: TextStyle(color: Colors.white60)),
+                    child: Text('No users found.',
+                        style: TextStyle(color: Colors.white60)),
                   ),
                 for (final user in recentUsers)
                   _UserTile(
                     name: user.data()['name'] ?? 'No name',
                     email: user.data()['email'] ?? 'No email',
-                    plan: user.data()['subscription'] ?? 'unknown',
-                    color: user.data()['subscription'] == 'premium' ? kAccent : kPurple,
+                    plan: _isPremium(user.data()) ? 'premium' : 'free',
+                    color: _isPremium(user.data()) ? kAccent : kPurple,
                   ),
               ],
             ),
@@ -478,7 +510,8 @@ class _UsersPageState extends State<UsersPage> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: kPanel,
-        title: const Text('Delete User', style: TextStyle(color: Colors.white)),
+        title:
+            const Text('Delete User', style: TextStyle(color: Colors.white)),
         content: const Text(
           'Are you sure you want to delete this user? This cannot be undone.',
           style: TextStyle(color: Colors.white70),
@@ -486,10 +519,12 @@ class _UsersPageState extends State<UsersPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            child: const Text('Cancel',
+                style: TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+            style:
+                ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('Delete'),
           ),
@@ -498,7 +533,10 @@ class _UsersPageState extends State<UsersPage> {
     );
 
     if (confirmed == true) {
-      await FirebaseFirestore.instance.collection('users').doc(docId).delete();
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(docId)
+          .delete();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -520,7 +558,8 @@ class _UsersPageState extends State<UsersPage> {
       context: context,
       builder: (_) => AlertDialog(
         backgroundColor: kPanel,
-        title: const Text('Edit Subscription', style: TextStyle(color: Colors.white)),
+        title: const Text('Edit Subscription',
+            style: TextStyle(color: Colors.white)),
         content: StatefulBuilder(
           builder: (context, setInner) => Column(
             mainAxisSize: MainAxisSize.min,
@@ -544,7 +583,8 @@ class _UsersPageState extends State<UsersPage> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            child: const Text('Cancel',
+                style: TextStyle(color: Colors.white54)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: kAccent),
@@ -563,7 +603,8 @@ class _UsersPageState extends State<UsersPage> {
                 );
               }
             },
-            child: const Text('Save', style: TextStyle(color: Colors.black)),
+            child:
+                const Text('Save', style: TextStyle(color: Colors.black)),
           ),
         ],
       ),
@@ -576,10 +617,16 @@ class _UsersPageState extends State<UsersPage> {
       final data = doc.data();
       final name = (data['name'] ?? '').toString().toLowerCase();
       final email = (data['email'] ?? '').toString().toLowerCase();
-      final sub = (data['subscription'] ?? '').toString();
+      final isPrem = _isPremium(data);
+
       final matchSearch =
           _search.isEmpty || name.contains(_search) || email.contains(_search);
-      final matchFilter = _filter == 'all' || sub == _filter;
+
+      // FIX: filter using _isPremium helper so missing/null fields work correctly
+      final matchFilter = _filter == 'all' ||
+          (_filter == 'premium' && isPrem) ||
+          (_filter == 'free' && !isPrem);
+
       return matchSearch && matchFilter;
     }).toList();
 
@@ -600,21 +647,25 @@ class _UsersPageState extends State<UsersPage> {
             children: [
               Expanded(
                 child: TextField(
-                  onChanged: (v) => setState(() => _search = v.toLowerCase()),
+                  onChanged: (v) =>
+                      setState(() => _search = v.toLowerCase()),
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     hintText: 'Search by name or email...',
                     hintStyle: const TextStyle(color: Colors.white38),
-                    prefixIcon: const Icon(Icons.search, color: Colors.white38),
+                    prefixIcon:
+                        const Icon(Icons.search, color: Colors.white38),
                     filled: true,
                     fillColor: kPanel.withOpacity(0.72),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: kAccent.withOpacity(0.2)),
+                      borderSide:
+                          BorderSide(color: kAccent.withOpacity(0.2)),
                     ),
                     enabledBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: kAccent.withOpacity(0.2)),
+                      borderSide:
+                          BorderSide(color: kAccent.withOpacity(0.2)),
                     ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
@@ -624,11 +675,22 @@ class _UsersPageState extends State<UsersPage> {
                 ),
               ),
               const SizedBox(width: 12),
-              _FilterChip(label: 'All', selected: _filter == 'all', onTap: () => setState(() => _filter = 'all')),
+              _FilterChip(
+                  label: 'All',
+                  selected: _filter == 'all',
+                  onTap: () => setState(() => _filter = 'all')),
               const SizedBox(width: 8),
-              _FilterChip(label: 'Free', selected: _filter == 'free', onTap: () => setState(() => _filter = 'free'), color: kPurple),
+              _FilterChip(
+                  label: 'Free',
+                  selected: _filter == 'free',
+                  onTap: () => setState(() => _filter = 'free'),
+                  color: kPurple),
               const SizedBox(width: 8),
-              _FilterChip(label: 'Premium', selected: _filter == 'premium', onTap: () => setState(() => _filter = 'premium'), color: kAccent),
+              _FilterChip(
+                  label: 'Premium',
+                  selected: _filter == 'premium',
+                  onTap: () => setState(() => _filter = 'premium'),
+                  color: kAccent),
             ],
           ),
 
@@ -639,7 +701,8 @@ class _UsersPageState extends State<UsersPage> {
               child: const Center(
                 child: Padding(
                   padding: EdgeInsets.all(32),
-                  child: Text('No users found.', style: TextStyle(color: Colors.white60)),
+                  child: Text('No users found.',
+                      style: TextStyle(color: Colors.white60)),
                 ),
               ),
             )
@@ -649,13 +712,16 @@ class _UsersPageState extends State<UsersPage> {
               child: Column(
                 children: [
                   for (int i = 0; i < filtered.length; i++) ...[
-                    if (i != 0) Divider(color: Colors.white.withOpacity(0.06), height: 1),
+                    if (i != 0)
+                      Divider(
+                          color: Colors.white.withOpacity(0.06), height: 1),
                     _UserRowEditable(
                       doc: filtered[i],
                       onDelete: () => _deleteUser(filtered[i].id),
                       onEdit: () => _editSubscription(
                         filtered[i].id,
-                        filtered[i].data()['subscription'] ?? 'free',
+                        // FIX: pass normalized plan string
+                        _isPremium(filtered[i].data()) ? 'premium' : 'free',
                       ),
                     ),
                   ]
@@ -684,8 +750,10 @@ class _UserRowEditable extends StatelessWidget {
     final data = doc.data();
     final name = data['name'] ?? 'No name';
     final email = data['email'] ?? 'No email';
-    final plan = data['subscription'] ?? 'unknown';
-    final color = plan == 'premium' ? kAccent : kPurple;
+    // FIX: use helper for consistent plan display
+    final isPrem = _isPremium(data);
+    final plan = isPrem ? 'premium' : 'free';
+    final color = isPrem ? kAccent : kPurple;
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -695,7 +763,8 @@ class _UserRowEditable extends StatelessWidget {
             backgroundColor: color.withOpacity(0.18),
             child: Text(
               name.isNotEmpty ? name[0].toUpperCase() : '?',
-              style: TextStyle(color: color, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                  color: color, fontWeight: FontWeight.bold),
             ),
           ),
           const SizedBox(width: 14),
@@ -703,19 +772,26 @@ class _UserRowEditable extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                Text(name,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600)),
                 const SizedBox(height: 2),
-                Text(email, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                Text(email,
+                    style: const TextStyle(
+                        color: Colors.white54, fontSize: 12)),
               ],
             ),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20),
               border: Border.all(color: color),
             ),
-            child: Text(plan, style: TextStyle(color: color, fontSize: 12)),
+            child:
+                Text(plan, style: TextStyle(color: color, fontSize: 12)),
           ),
           const SizedBox(width: 8),
           IconButton(
@@ -755,16 +831,21 @@ class _PlanOption extends StatelessWidget {
       onTap: onTap,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+        padding:
+            const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
         decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.15) : Colors.white.withOpacity(0.05),
+          color: selected
+              ? color.withOpacity(0.15)
+              : Colors.white.withOpacity(0.05),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: selected ? color : Colors.white12),
         ),
         child: Row(
           children: [
             Icon(
-              selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+              selected
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
               color: selected ? color : Colors.white38,
               size: 18,
             ),
@@ -773,7 +854,8 @@ class _PlanOption extends StatelessWidget {
               label,
               style: TextStyle(
                 color: selected ? color : Colors.white70,
-                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                fontWeight:
+                    selected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
           ],
@@ -790,11 +872,14 @@ class PremiumPage extends StatelessWidget {
   final _AppStats stats;
   final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs;
 
-  const PremiumPage({super.key, required this.stats, required this.docs});
+  const PremiumPage(
+      {super.key, required this.stats, required this.docs});
 
   @override
   Widget build(BuildContext context) {
-    final premiumDocs = docs.where((d) => d.data()['subscription'] == 'premium').toList();
+    // FIX: use helper so recently upgraded users appear immediately
+    final premiumDocs =
+        docs.where((d) => _isPremium(d.data())).toList();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
@@ -823,7 +908,8 @@ class PremiumPage extends StatelessWidget {
                   title: 'Premium Users',
                   value: '${stats.premium}',
                   icon: Icons.diamond_rounded,
-                  subtitle: '${(stats.premiumPercent * 100).toStringAsFixed(1)}% of total',
+                  subtitle:
+                      '${(stats.premiumPercent * 100).toStringAsFixed(1)}% of total',
                   iconColor: kAccent,
                 ),
                 _StatCard(
@@ -908,7 +994,8 @@ class PremiumPage extends StatelessWidget {
                 if (premiumDocs.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text('No premium users yet.', style: TextStyle(color: Colors.white60)),
+                    child: Text('No premium users yet.',
+                        style: TextStyle(color: Colors.white60)),
                   )
                 else
                   for (final user in premiumDocs)
@@ -934,7 +1021,8 @@ class AnalyticsPage extends StatelessWidget {
   final _AppStats stats;
   final List<QueryDocumentSnapshot<Map<String, dynamic>>> docs;
 
-  const AnalyticsPage({super.key, required this.stats, required this.docs});
+  const AnalyticsPage(
+      {super.key, required this.stats, required this.docs});
 
   @override
   Widget build(BuildContext context) {
@@ -1012,7 +1100,9 @@ class AnalyticsPage extends StatelessWidget {
                               color: Colors.white,
                             ),
                           ),
-                          const Text('users', style: TextStyle(color: Colors.white54)),
+                          const Text('users',
+                              style:
+                                  TextStyle(color: Colors.white54)),
                         ],
                       ),
                     ),
@@ -1022,9 +1112,13 @@ class AnalyticsPage extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _Legend(color: kPurple, label: 'Free (${stats.free})'),
+                    _Legend(
+                        color: kPurple,
+                        label: 'Free (${stats.free})'),
                     const SizedBox(width: 24),
-                    _Legend(color: kAccent, label: 'Premium (${stats.premium})'),
+                    _Legend(
+                        color: kAccent,
+                        label: 'Premium (${stats.premium})'),
                   ],
                 ),
               ],
@@ -1045,14 +1139,16 @@ class AnalyticsPage extends StatelessWidget {
                 const SizedBox(height: 8),
                 const Text(
                   'Simulated monthly trend based on current premium count',
-                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                  style:
+                      TextStyle(color: Colors.white38, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
                 SizedBox(
                   height: 120,
                   width: double.infinity,
                   child: CustomPaint(
-                    painter: _LineChartPainter(premiumCount: stats.premium),
+                    painter: _LineChartPainter(
+                        premiumCount: stats.premium),
                   ),
                 ),
               ],
@@ -1071,10 +1167,16 @@ class AnalyticsPage extends StatelessWidget {
                   title: 'Summary',
                 ),
                 const SizedBox(height: 16),
-                _SummaryRow(label: 'Total Users', value: '${stats.total}'),
-                _SummaryRow(label: 'Free Users', value: '${stats.free}'),
-                _SummaryRow(label: 'Premium Users', value: '${stats.premium}'),
-                _SummaryRow(label: 'Premium Price', value: '₱$kPremiumPrice'),
+                _SummaryRow(
+                    label: 'Total Users', value: '${stats.total}'),
+                _SummaryRow(
+                    label: 'Free Users', value: '${stats.free}'),
+                _SummaryRow(
+                    label: 'Premium Users',
+                    value: '${stats.premium}'),
+                _SummaryRow(
+                    label: 'Premium Price',
+                    value: '₱$kPremiumPrice'),
                 _SummaryRow(
                   label: 'Total Revenue',
                   value: '₱${stats.income}',
@@ -1115,7 +1217,8 @@ class _Header extends StatelessWidget {
             color: kAccent.withOpacity(0.15),
             shape: BoxShape.circle,
           ),
-          child: const Icon(Icons.admin_panel_settings_rounded, color: kAccent),
+          child: const Icon(Icons.admin_panel_settings_rounded,
+              color: kAccent),
         ),
         const SizedBox(width: 14),
         const Expanded(
@@ -1124,10 +1227,14 @@ class _Header extends StatelessWidget {
             children: [
               Text(
                 'CleftTune Admin',
-                style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold),
               ),
               SizedBox(height: 2),
-              Text('Realtime database overview', style: TextStyle(color: Colors.white60)),
+              Text('Realtime database overview',
+                  style: TextStyle(color: Colors.white60)),
             ],
           ),
         ),
@@ -1173,7 +1280,9 @@ class _PageTitle extends StatelessWidget {
                     color: Colors.white,
                     fontSize: 22,
                     fontWeight: FontWeight.bold)),
-            Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+            Text(subtitle,
+                style: const TextStyle(
+                    color: Colors.white54, fontSize: 13)),
           ],
         ),
       ],
@@ -1229,13 +1338,17 @@ class _StatCard extends StatelessWidget {
             child: Icon(icon, color: iconColor),
           ),
           const Spacer(),
-          Text(title, style: const TextStyle(color: Colors.white70)),
+          Text(title,
+              style: const TextStyle(color: Colors.white70)),
           const SizedBox(height: 6),
           Text(value,
               style: const TextStyle(
-                  fontSize: 30, fontWeight: FontWeight.bold, color: Colors.white)),
+                  fontSize: 30,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white)),
           const SizedBox(height: 4),
-          Text(subtitle, style: TextStyle(color: iconColor, fontSize: 12)),
+          Text(subtitle,
+              style: TextStyle(color: iconColor, fontSize: 12)),
         ],
       ),
     );
@@ -1272,7 +1385,9 @@ class _KpiCard extends StatelessWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+              Text(title,
+                  style: const TextStyle(
+                      color: Colors.white60, fontSize: 12)),
               const SizedBox(height: 4),
               Text(value,
                   style: TextStyle(
@@ -1301,7 +1416,9 @@ class _SectionTitle extends StatelessWidget {
         const SizedBox(width: 8),
         Text(title,
             style: const TextStyle(
-                fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Colors.white)),
       ],
     );
   }
@@ -1327,8 +1444,12 @@ class _ProgressRow extends StatelessWidget {
       children: [
         Row(
           children: [
-            Expanded(child: Text(label, style: const TextStyle(color: Colors.white70))),
-            Text('$count users', style: const TextStyle(color: Colors.white54)),
+            Expanded(
+                child: Text(label,
+                    style:
+                        const TextStyle(color: Colors.white70))),
+            Text('$count users',
+                style: const TextStyle(color: Colors.white54)),
           ],
         ),
         const SizedBox(height: 8),
@@ -1365,18 +1486,24 @@ class _UserTile extends StatelessWidget {
         backgroundColor: color.withOpacity(0.18),
         child: Text(
           name.isNotEmpty ? name[0].toUpperCase() : '?',
-          style: TextStyle(color: color, fontWeight: FontWeight.bold),
+          style:
+              TextStyle(color: color, fontWeight: FontWeight.bold),
         ),
       ),
-      title: Text(name, style: const TextStyle(color: Colors.white)),
-      subtitle: Text(email, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+      title:
+          Text(name, style: const TextStyle(color: Colors.white)),
+      subtitle: Text(email,
+          style:
+              const TextStyle(color: Colors.white54, fontSize: 12)),
       trailing: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: color),
         ),
-        child: Text(plan, style: TextStyle(color: color, fontSize: 12)),
+        child:
+            Text(plan, style: TextStyle(color: color, fontSize: 12)),
       ),
     );
   }
@@ -1401,9 +1528,12 @@ class _FilterChip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        padding:
+            const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
-          color: selected ? color.withOpacity(0.15) : Colors.transparent,
+          color: selected
+              ? color.withOpacity(0.15)
+              : Colors.transparent,
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: selected ? color : Colors.white24,
@@ -1413,7 +1543,8 @@ class _FilterChip extends StatelessWidget {
           label,
           style: TextStyle(
             color: selected ? color : Colors.white54,
-            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+            fontWeight:
+                selected ? FontWeight.bold : FontWeight.normal,
             fontSize: 13,
           ),
         ),
@@ -1443,7 +1574,9 @@ class _SummaryRow extends StatelessWidget {
               label,
               style: TextStyle(
                 color: highlight ? Colors.white : Colors.white60,
-                fontWeight: highlight ? FontWeight.bold : FontWeight.normal,
+                fontWeight: highlight
+                    ? FontWeight.bold
+                    : FontWeight.normal,
               ),
             ),
           ),
@@ -1474,10 +1607,13 @@ class _Legend extends StatelessWidget {
         Container(
           width: 12,
           height: 12,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          decoration:
+              BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 6),
-        Text(label, style: const TextStyle(color: Colors.white60, fontSize: 13)),
+        Text(label,
+            style: const TextStyle(
+                color: Colors.white60, fontSize: 13)),
       ],
     );
   }
@@ -1497,9 +1633,11 @@ class _ErrorView extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.error_outline_rounded, color: Colors.redAccent, size: 48),
+          const Icon(Icons.error_outline_rounded,
+              color: Colors.redAccent, size: 48),
           const SizedBox(height: 12),
-          Text('Error: $error', style: const TextStyle(color: Colors.white70)),
+          Text('Error: $error',
+              style: const TextStyle(color: Colors.white70)),
         ],
       ),
     );
@@ -1538,10 +1676,10 @@ class _LineChartPainter extends CustomPainter {
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
         colors: [kAccent.withOpacity(0.3), kAccent.withOpacity(0)],
-      ).createShader(Rect.fromLTWH(0, 0, size.width, size.height))
+      ).createShader(
+          Rect.fromLTWH(0, 0, size.width, size.height))
       ..style = PaintingStyle.fill;
 
-    // Simulate trend from 0 to premium count
     final List<double> values = [
       0.1, 0.2, 0.3, 0.35, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0,
     ];
@@ -1553,7 +1691,8 @@ class _LineChartPainter extends CustomPainter {
       );
     });
 
-    final path = Path()..moveTo(points.first.dx, points.first.dy);
+    final path = Path()
+      ..moveTo(points.first.dx, points.first.dy);
     for (final p in points.skip(1)) {
       path.lineTo(p.dx, p.dy);
     }
@@ -1580,7 +1719,8 @@ class _DonutPainter extends CustomPainter {
   final double freeRatio;
   final double premiumRatio;
 
-  const _DonutPainter({required this.freeRatio, required this.premiumRatio});
+  const _DonutPainter(
+      {required this.freeRatio, required this.premiumRatio});
 
   @override
   void paint(Canvas canvas, Size size) {
