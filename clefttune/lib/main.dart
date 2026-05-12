@@ -53,21 +53,19 @@ class MyApp extends StatelessWidget {
 // ─────────────────────────────────────────────
 // THEME CONSTANTS
 // ─────────────────────────────────────────────
-const kBg          = Color(0xFF020C12);
-const kPanel       = Color(0xFF0B2E39);
-const kSidebar     = Color(0xFF081920);
-const kAccent      = Color(0xFF00E6C3);
-const kPurple      = Color(0xFF9B6DFF);
-const kBlue        = Color(0xFF2D9CFF);
-const kGold        = Color(0xFFFFB800);
-const kRed         = Color(0xFFFF4D6A);
-const kGreen       = Color(0xFF00E096);
+const kBg           = Color(0xFF020C12);
+const kPanel        = Color(0xFF0B2E39);
+const kSidebar      = Color(0xFF081920);
+const kAccent       = Color(0xFF00E6C3);
+const kPurple       = Color(0xFF9B6DFF);
+const kBlue         = Color(0xFF2D9CFF);
+const kGold         = Color(0xFFFFB800);
+const kRed          = Color(0xFFFF4D6A);
+const kGreen        = Color(0xFF00E096);
 const kPremiumPrice = 99;
 
 // ─────────────────────────────────────────────
-// HELPERS — checks ALL three fields so admin
-// always sees the correct status regardless of
-// which field the app wrote first.
+// HELPERS
 // ─────────────────────────────────────────────
 bool _isPremium(Map<String, dynamic> data) {
   final sub  = (data['subscription'] ?? '').toString().toLowerCase().trim();
@@ -76,7 +74,6 @@ bool _isPremium(Map<String, dynamic> data) {
   return sub == 'premium' || plan == 'premium' || flag;
 }
 
-// Writes ALL three fields so CleftTune app always stays in sync.
 Map<String, dynamic> _premiumFields() => {
   'subscription': 'premium',
   'plan':         'premium',
@@ -152,13 +149,14 @@ class AdminShell extends StatefulWidget {
 
 class _AdminShellState extends State<AdminShell> {
   int _selectedIndex = 0;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   static const _navItems = [
-    _NavItem(Icons.dashboard_rounded,          'Dashboard'),
-    _NavItem(Icons.people_alt_rounded,         'Users'),
-    _NavItem(Icons.workspace_premium_rounded,  'Premium'),
-    _NavItem(Icons.payment_rounded,            'Payments'),
-    _NavItem(Icons.analytics_rounded,          'Analytics'),
+    _NavItem(Icons.dashboard_rounded,         'Dashboard'),
+    _NavItem(Icons.people_alt_rounded,        'Users'),
+    _NavItem(Icons.workspace_premium_rounded, 'Premium'),
+    _NavItem(Icons.payment_rounded,           'Payments'),
+    _NavItem(Icons.analytics_rounded,         'Analytics'),
   ];
 
   @override
@@ -192,41 +190,54 @@ class _AdminShellState extends State<AdminShell> {
                 .where((d) => _parseStatus(d.data()['status']) == PaymentStatus.pending)
                 .length;
 
+            // ── Drawer content shared by both mobile drawer and desktop sidebar
+            final sidebarContent = _SidebarContent(
+              selectedIndex:   _selectedIndex,
+              navItems:        _navItems,
+              pendingPayments: pendingCount,
+              onSelect: (i) {
+                setState(() => _selectedIndex = i);
+                if (isMobile) Navigator.pop(context);
+              },
+            );
+
             return Scaffold(
+              key: _scaffoldKey,
               backgroundColor: kBg,
+              // ── Mobile drawer ──────────────────────────────────────────────
               drawer: isMobile
                   ? Drawer(
                       backgroundColor: kSidebar,
-                      child: SafeArea(
-                        child: _SidebarContent(
-                          selectedIndex:  _selectedIndex,
-                          navItems:       _navItems,
-                          pendingPayments: pendingCount,
-                          onSelect: (i) {
-                            setState(() => _selectedIndex = i);
-                            Navigator.pop(context);
-                          },
-                        ),
-                      ),
+                      child: SafeArea(child: sidebarContent),
                     )
                   : null,
               body: SafeArea(
-                child: Row(
+                child: Stack(
                   children: [
-                    if (!isMobile)
-                      _SidebarContent(
-                        selectedIndex:   _selectedIndex,
-                        navItems:        _navItems,
-                        pendingPayments: pendingCount,
-                        onSelect: (i) => setState(() => _selectedIndex = i),
-                      ),
-                    Expanded(
-                      child: hasError
-                          ? _ErrorView(error: (usersSnap.error ?? paymentsSnap.error).toString())
-                          : isLoading
-                              ? const _LoadingView()
-                              : pages[_selectedIndex],
+                    Row(
+                      children: [
+                        // ── Desktop sidebar ──────────────────────────────────
+                        if (!isMobile) sidebarContent,
+                        Expanded(
+                          child: hasError
+                              ? _ErrorView(error: (usersSnap.error ?? paymentsSnap.error).toString())
+                              : isLoading
+                                  ? const _LoadingView()
+                                  : pages[_selectedIndex],
+                        ),
+                      ],
                     ),
+
+                    // ── Mobile hamburger FAB (always on top) ─────────────────
+                    if (isMobile)
+                      Positioned(
+                        top: 12,
+                        left: 12,
+                        child: _HamburgerButton(
+                          pendingCount: pendingCount,
+                          onTap: () => _scaffoldKey.currentState?.openDrawer(),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -234,6 +245,96 @@ class _AdminShellState extends State<AdminShell> {
           },
         );
       },
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// HAMBURGER BUTTON WIDGET
+// ─────────────────────────────────────────────
+class _HamburgerButton extends StatelessWidget {
+  final int pendingCount;
+  final VoidCallback onTap;
+
+  const _HamburgerButton({required this.pendingCount, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: kPanel,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kAccent.withOpacity(0.35)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.4),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            // Hamburger icon — three lines
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _HamburgerLine(width: 18),
+                const SizedBox(height: 4),
+                _HamburgerLine(width: 14),
+                const SizedBox(height: 4),
+                _HamburgerLine(width: 18),
+              ],
+            ),
+            // Badge for pending payments
+            if (pendingCount > 0)
+              Positioned(
+                top: 6,
+                right: 6,
+                child: Container(
+                  width: 16,
+                  height: 16,
+                  decoration: const BoxDecoration(
+                    color: kGold,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Text(
+                      pendingCount > 9 ? '9+' : '$pendingCount',
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontSize: 9,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _HamburgerLine extends StatelessWidget {
+  final double width;
+  const _HamburgerLine({required this.width});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      height: 2,
+      decoration: BoxDecoration(
+        color: kAccent,
+        borderRadius: BorderRadius.circular(2),
+      ),
     );
   }
 }
@@ -310,10 +411,10 @@ class _NavItem {
 }
 
 class _SidebarContent extends StatelessWidget {
-  final int             selectedIndex;
-  final List<_NavItem>  navItems;
+  final int              selectedIndex;
+  final List<_NavItem>   navItems;
   final ValueChanged<int> onSelect;
-  final int             pendingPayments;
+  final int              pendingPayments;
 
   const _SidebarContent({
     required this.selectedIndex,
@@ -361,11 +462,11 @@ class _SidebarContent extends StatelessWidget {
 }
 
 class _SidebarTile extends StatelessWidget {
-  final IconData    icon;
-  final String      label;
-  final bool        selected;
+  final IconData     icon;
+  final String       label;
+  final bool         selected;
   final VoidCallback onTap;
-  final int?        badge;
+  final int?         badge;
 
   const _SidebarTile({
     required this.icon, required this.label,
@@ -398,7 +499,7 @@ class _SidebarTile extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: kGold, borderRadius: BorderRadius.circular(20)),
+                      color: kGold, borderRadius: BorderRadius.circular(20)),
                   child: Text('$badge',
                       style: const TextStyle(color: Colors.black,
                           fontSize: 11, fontWeight: FontWeight.bold)),
@@ -439,8 +540,6 @@ class _PaymentsPageState extends State<PaymentsPage> {
     }
   }
 
-  // ── VERIFY ────────────────────────────────────────────────────────────────
-  // Writes ALL three subscription fields so both apps stay in sync.
   Future<void> _verifyPayment(String paymentId, String userId) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -467,14 +566,10 @@ class _PaymentsPageState extends State<PaymentsPage> {
     if (confirmed != true) return;
 
     final batch = FirebaseFirestore.instance.batch();
-
-    // Mark payment verified
     batch.update(
       FirebaseFirestore.instance.collection('payments').doc(paymentId),
       {'status': 'verified', 'verifiedAt': FieldValue.serverTimestamp()},
     );
-
-    // Upgrade user — write ALL fields so CleftTune app reads correctly
     if (userId.isNotEmpty) {
       batch.update(
         FirebaseFirestore.instance.collection('users').doc(userId),
@@ -484,7 +579,6 @@ class _PaymentsPageState extends State<PaymentsPage> {
         },
       );
     }
-
     await batch.commit();
 
     if (mounted) {
@@ -495,7 +589,6 @@ class _PaymentsPageState extends State<PaymentsPage> {
     }
   }
 
-  // ── REJECT ────────────────────────────────────────────────────────────────
   Future<void> _rejectPayment(String paymentId) async {
     final reasonController = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -558,7 +651,6 @@ class _PaymentsPageState extends State<PaymentsPage> {
     }
   }
 
-  // ── DETAIL DIALOG ─────────────────────────────────────────────────────────
   Future<void> _showPaymentDetail(
       QueryDocumentSnapshot<Map<String, dynamic>> doc) async {
     final data     = doc.data();
@@ -647,12 +739,13 @@ class _PaymentsPageState extends State<PaymentsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 800;
     final pending  = widget.paymentDocs.where((d) => _parseStatus(d.data()['status']) == PaymentStatus.pending).length;
     final verified = widget.paymentDocs.where((d) => _parseStatus(d.data()['status']) == PaymentStatus.verified).length;
     final rejected = widget.paymentDocs.where((d) => _parseStatus(d.data()['status']) == PaymentStatus.rejected).length;
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.fromLTRB(24, isMobile ? 68 : 24, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -663,7 +756,6 @@ class _PaymentsPageState extends State<PaymentsPage> {
           ),
           const SizedBox(height: 20),
 
-          // ── Summary cards ─────────────────────────────────────────────────
           LayoutBuilder(builder: (ctx, constraints) {
             final cols = constraints.maxWidth > 700 ? 4 : 2;
             return GridView.count(
@@ -672,30 +764,26 @@ class _PaymentsPageState extends State<PaymentsPage> {
               crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.4,
               children: [
                 _StatCard(title: 'Total',    value: '${widget.paymentDocs.length}',
-                    icon: Icons.receipt_rounded,          subtitle: 'All payments',     iconColor: kBlue),
+                    icon: Icons.receipt_rounded,          subtitle: 'All payments',    iconColor: kBlue),
                 _StatCard(title: 'Pending',  value: '$pending',
-                    icon: Icons.hourglass_empty_rounded,  subtitle: 'Awaiting review',  iconColor: kGold),
+                    icon: Icons.hourglass_empty_rounded,  subtitle: 'Awaiting review', iconColor: kGold),
                 _StatCard(title: 'Verified', value: '$verified',
-                    icon: Icons.check_circle_rounded,     subtitle: 'Approved',         iconColor: kGreen),
+                    icon: Icons.check_circle_rounded,     subtitle: 'Approved',        iconColor: kGreen),
                 _StatCard(title: 'Rejected', value: '$rejected',
-                    icon: Icons.cancel_rounded,           subtitle: 'Declined',         iconColor: kRed),
+                    icon: Icons.cancel_rounded,           subtitle: 'Declined',        iconColor: kRed),
               ],
             );
           }),
 
           const SizedBox(height: 20),
 
-          // ── Filter chips ──────────────────────────────────────────────────
-          Row(children: [
+          Wrap(spacing: 8, runSpacing: 8, children: [
             _FilterChip(label: 'All',      selected: _filter == 'all',
                 onTap: () => setState(() => _filter = 'all')),
-            const SizedBox(width: 8),
             _FilterChip(label: 'Pending',  selected: _filter == 'pending',  color: kGold,
                 onTap: () => setState(() => _filter = 'pending')),
-            const SizedBox(width: 8),
             _FilterChip(label: 'Verified', selected: _filter == 'verified', color: kGreen,
                 onTap: () => setState(() => _filter = 'verified')),
-            const SizedBox(width: 8),
             _FilterChip(label: 'Rejected', selected: _filter == 'rejected', color: kRed,
                 onTap: () => setState(() => _filter = 'rejected')),
           ]),
@@ -716,7 +804,6 @@ class _PaymentsPageState extends State<PaymentsPage> {
             _GlassPanel(
               padding: EdgeInsets.zero,
               child: Column(children: [
-                // Table header
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: Row(children: const [
@@ -732,7 +819,6 @@ class _PaymentsPageState extends State<PaymentsPage> {
                   ]),
                 ),
                 Divider(color: Colors.white.withOpacity(0.06), height: 1),
-
                 for (int i = 0; i < _filtered.length; i++) ...[
                   if (i != 0) Divider(color: Colors.white.withOpacity(0.04), height: 1),
                   _PaymentRow(
@@ -748,7 +834,6 @@ class _PaymentsPageState extends State<PaymentsPage> {
 
           const SizedBox(height: 24),
 
-          // ── Field guide ───────────────────────────────────────────────────
           _GlassPanel(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -761,9 +846,9 @@ class _PaymentsPageState extends State<PaymentsPage> {
                   style: TextStyle(color: Colors.white60, fontSize: 12),
                 ),
                 const SizedBox(height: 14),
-                _FieldGuideRow('subscription', 'String', '"premium" | "free"  — read by admin'),
-                _FieldGuideRow('plan',         'String', '"premium" | "free"  — read by CleftTune SettingsScreen'),
-                _FieldGuideRow('isPremium',    'bool',   'true | false        — read by CleftTune PremiumGate'),
+                _FieldGuideRow('subscription', 'String',    '"premium" | "free"  — read by admin'),
+                _FieldGuideRow('plan',         'String',    '"premium" | "free"  — read by CleftTune SettingsScreen'),
+                _FieldGuideRow('isPremium',    'bool',      'true | false        — read by CleftTune PremiumGate'),
                 _FieldGuideRow('upgradedAt',   'Timestamp', 'set on verify'),
                 _FieldGuideRow('cancelledAt',  'Timestamp', 'set on cancel'),
               ],
@@ -803,7 +888,6 @@ class _PaymentRow extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Row(children: [
-          // User
           Expanded(flex: 3, child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -812,7 +896,6 @@ class _PaymentRow extends StatelessWidget {
                 Text(email, style: const TextStyle(color: Colors.white38, fontSize: 11)),
             ],
           )),
-          // Method / ref
           Expanded(flex: 2, child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -829,12 +912,9 @@ class _PaymentRow extends StatelessWidget {
               Text(ref, style: const TextStyle(color: Colors.white54, fontSize: 11)),
             ],
           )),
-          // Amount
           Expanded(child: Text('₱$amount',
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-          // Status
           Expanded(child: _StatusBadge(status)),
-          // Actions
           SizedBox(
             width: 80,
             child: Row(
@@ -990,17 +1070,22 @@ class DashboardPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final w           = MediaQuery.of(context).size.width;
+    final isMobile    = w < 800;
     final recentUsers = _sortedByRecent().take(5).toList();
 
     return SingleChildScrollView(
-      padding: EdgeInsets.symmetric(horizontal: w < 600 ? 12 : 24, vertical: 20),
+      padding: EdgeInsets.fromLTRB(
+        isMobile ? 12 : 24,
+        isMobile ? 68 : 20,   // extra top padding on mobile for hamburger button
+        isMobile ? 12 : 24,
+        20,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _Header(mobile: w < 800),
+          _DashboardHeader(),
           const SizedBox(height: 24),
 
-          // ── Stat cards ────────────────────────────────────────────────────
           LayoutBuilder(builder: (context, constraints) {
             int cols = 1;
             if (constraints.maxWidth > 1200) cols = 4;
@@ -1010,25 +1095,24 @@ class DashboardPage extends StatelessWidget {
               physics: const NeverScrollableScrollPhysics(),
               crossAxisSpacing: 16, mainAxisSpacing: 16, childAspectRatio: 1.25,
               children: [
-                _StatCard(title: 'Total Users',     value: '${stats.total}',
+                _StatCard(title: 'Total Users',      value: '${stats.total}',
                     icon: Icons.people_alt_rounded,
-                    subtitle: 'All registered users', iconColor: kAccent),
-                _StatCard(title: 'Free Users',      value: '${stats.free}',
+                    subtitle: 'All registered users',              iconColor: kAccent),
+                _StatCard(title: 'Free Users',       value: '${stats.free}',
                     icon: Icons.star_rounded,
-                    subtitle: '${(stats.freePercent * 100).toStringAsFixed(1)}%', iconColor: kPurple),
-                _StatCard(title: 'Premium Users',   value: '${stats.premium}',
+                    subtitle: '${(stats.freePercent * 100).toStringAsFixed(1)}%',    iconColor: kPurple),
+                _StatCard(title: 'Premium Users',    value: '${stats.premium}',
                     icon: Icons.diamond_rounded,
                     subtitle: '${(stats.premiumPercent * 100).toStringAsFixed(1)}%', iconColor: kBlue),
                 _StatCard(title: 'Verified Revenue', value: '₱${stats.verifiedRevenue}',
                     icon: Icons.account_balance_wallet_rounded,
-                    subtitle: '₱${stats.pendingRevenue} pending', iconColor: kAccent),
+                    subtitle: '₱${stats.pendingRevenue} pending',  iconColor: kAccent),
               ],
             );
           }),
 
           const SizedBox(height: 18),
 
-          // ── Payment overview ──────────────────────────────────────────────
           _GlassPanel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const _SectionTitle(icon: Icons.payment_rounded, title: 'Payment Overview'),
@@ -1044,7 +1128,6 @@ class DashboardPage extends StatelessWidget {
 
           const SizedBox(height: 18),
 
-          // ── Subscription overview ─────────────────────────────────────────
           _GlassPanel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const _SectionTitle(icon: Icons.pie_chart_rounded, title: 'Subscription Overview'),
@@ -1057,7 +1140,6 @@ class DashboardPage extends StatelessWidget {
 
           const SizedBox(height: 18),
 
-          // ── Income overview ───────────────────────────────────────────────
           _GlassPanel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const _SectionTitle(icon: Icons.analytics_rounded, title: 'Income Overview'),
@@ -1078,7 +1160,6 @@ class DashboardPage extends StatelessWidget {
 
           const SizedBox(height: 18),
 
-          // ── Recent users ──────────────────────────────────────────────────
           _GlassPanel(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               const _SectionTitle(icon: Icons.group_rounded, title: 'Recent Users'),
@@ -1102,6 +1183,29 @@ class DashboardPage extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// Dashboard header — no hamburger here; the hamburger is rendered
+/// by AdminShell as a Stack overlay so it appears on every page.
+class _DashboardHeader extends StatelessWidget {
+  const _DashboardHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Container(height: 50, width: 50,
+          decoration: BoxDecoration(color: kAccent.withOpacity(0.15), shape: BoxShape.circle),
+          child: const Icon(Icons.admin_panel_settings_rounded, color: kAccent)),
+      const SizedBox(width: 14),
+      const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('CleftTune Admin',
+            style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+        SizedBox(height: 2),
+        Text('Realtime database overview', style: TextStyle(color: Colors.white60)),
+      ])),
+      IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_none_rounded)),
+    ]);
   }
 }
 
@@ -1163,7 +1267,6 @@ class _UsersPageState extends State<UsersPage> {
     }
   }
 
-  // Writes ALL three fields so CleftTune app reads correctly after admin edit.
   Future<void> _editSubscription(String docId, String currentPlan) async {
     String newPlan = currentPlan;
     await showDialog(
@@ -1189,7 +1292,6 @@ class _UsersPageState extends State<UsersPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: kAccent),
             onPressed: () async {
-              // Write all three fields so both apps see the change immediately
               final fields = newPlan == 'premium' ? _premiumFields() : _freeFields();
               await FirebaseFirestore.instance.collection('users').doc(docId).update(fields);
               if (mounted) Navigator.pop(context);
@@ -1209,6 +1311,7 @@ class _UsersPageState extends State<UsersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 800;
     final filtered = widget.docs.where((doc) {
       final data    = doc.data();
       final name    = (data['name']  ?? '').toString().toLowerCase();
@@ -1222,7 +1325,7 @@ class _UsersPageState extends State<UsersPage> {
     }).toList();
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.fromLTRB(24, isMobile ? 68 : 24, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1230,35 +1333,64 @@ class _UsersPageState extends State<UsersPage> {
               title: 'Users', subtitle: '${widget.docs.length} total users'),
           const SizedBox(height: 20),
 
-          Row(children: [
-            Expanded(
-              child: TextField(
-                onChanged: (v) => setState(() => _search = v.toLowerCase()),
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  hintText: 'Search by name or email...',
-                  hintStyle: const TextStyle(color: Colors.white38),
-                  prefixIcon: const Icon(Icons.search, color: Colors.white38),
-                  filled: true, fillColor: kPanel.withOpacity(0.72),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
-                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: kAccent)),
-                ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            _FilterChip(label: 'All',     selected: _filter == 'all',
-                onTap: () => setState(() => _filter = 'all')),
-            const SizedBox(width: 8),
-            _FilterChip(label: 'Free',    selected: _filter == 'free',    color: kPurple,
-                onTap: () => setState(() => _filter = 'free')),
-            const SizedBox(width: 8),
-            _FilterChip(label: 'Premium', selected: _filter == 'premium', color: kAccent,
-                onTap: () => setState(() => _filter = 'premium')),
-          ]),
+          // Search bar + filter chips (wrap on mobile)
+          isMobile
+              ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  TextField(
+                    onChanged: (v) => setState(() => _search = v.toLowerCase()),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      hintText: 'Search by name or email...',
+                      hintStyle: const TextStyle(color: Colors.white38),
+                      prefixIcon: const Icon(Icons.search, color: Colors.white38),
+                      filled: true, fillColor: kPanel.withOpacity(0.72),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                          borderSide: const BorderSide(color: kAccent)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(spacing: 8, runSpacing: 8, children: [
+                    _FilterChip(label: 'All',     selected: _filter == 'all',
+                        onTap: () => setState(() => _filter = 'all')),
+                    _FilterChip(label: 'Free',    selected: _filter == 'free',    color: kPurple,
+                        onTap: () => setState(() => _filter = 'free')),
+                    _FilterChip(label: 'Premium', selected: _filter == 'premium', color: kAccent,
+                        onTap: () => setState(() => _filter = 'premium')),
+                  ]),
+                ])
+              : Row(children: [
+                  Expanded(
+                    child: TextField(
+                      onChanged: (v) => setState(() => _search = v.toLowerCase()),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        hintText: 'Search by name or email...',
+                        hintStyle: const TextStyle(color: Colors.white38),
+                        prefixIcon: const Icon(Icons.search, color: Colors.white38),
+                        filled: true, fillColor: kPanel.withOpacity(0.72),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: kAccent)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  _FilterChip(label: 'All',     selected: _filter == 'all',
+                      onTap: () => setState(() => _filter = 'all')),
+                  const SizedBox(width: 8),
+                  _FilterChip(label: 'Free',    selected: _filter == 'free',    color: kPurple,
+                      onTap: () => setState(() => _filter = 'free')),
+                  const SizedBox(width: 8),
+                  _FilterChip(label: 'Premium', selected: _filter == 'premium', color: kAccent,
+                      onTap: () => setState(() => _filter = 'premium')),
+                ]),
 
           const SizedBox(height: 20),
 
@@ -1355,7 +1487,7 @@ class _PlanOption extends StatelessWidget {
               color: selected ? color : Colors.white38, size: 18),
           const SizedBox(width: 10),
           Text(label, style: TextStyle(
-            color: selected ? color : Colors.white70,
+            color:      selected ? color : Colors.white70,
             fontWeight: selected ? FontWeight.bold : FontWeight.normal,
           )),
         ]),
@@ -1375,10 +1507,11 @@ class PremiumPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile  = MediaQuery.of(context).size.width < 800;
     final premiumDocs = docs.where((d) => _isPremium(d.data())).toList();
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.fromLTRB(24, isMobile ? 68 : 24, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1393,12 +1526,12 @@ class PremiumPage extends StatelessWidget {
               physics: const NeverScrollableScrollPhysics(),
               crossAxisSpacing: 16, mainAxisSpacing: 16, childAspectRatio: 1.5,
               children: [
-                _StatCard(title: 'Premium Users',   value: '${stats.premium}',
+                _StatCard(title: 'Premium Users',    value: '${stats.premium}',
                     icon: Icons.diamond_rounded,
                     subtitle: '${(stats.premiumPercent * 100).toStringAsFixed(1)}% of total',
                     iconColor: kAccent),
-                _StatCard(title: 'Price / User',    value: '₱$kPremiumPrice',
-                    icon: Icons.sell_rounded,       subtitle: 'Per month', iconColor: kBlue),
+                _StatCard(title: 'Price / User',     value: '₱$kPremiumPrice',
+                    icon: Icons.sell_rounded,         subtitle: 'Per month', iconColor: kBlue),
                 _StatCard(title: 'Verified Revenue', value: '₱${stats.verifiedRevenue}',
                     icon: Icons.account_balance_wallet_rounded,
                     subtitle: '₱${stats.pendingRevenue} pending', iconColor: kPurple),
@@ -1459,8 +1592,10 @@ class AnalyticsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isMobile = MediaQuery.of(context).size.width < 800;
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.fromLTRB(24, isMobile ? 68 : 24, 24, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1566,34 +1701,6 @@ class AnalyticsPage extends StatelessWidget {
 // ─────────────────────────────────────────────
 // SHARED WIDGETS
 // ─────────────────────────────────────────────
-
-class _Header extends StatelessWidget {
-  final bool mobile;
-  const _Header({required this.mobile});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(children: [
-      if (mobile)
-        Builder(builder: (ctx) => IconButton(
-          icon: const Icon(Icons.menu),
-          onPressed: () => Scaffold.of(ctx).openDrawer(),
-        )),
-      Container(height: 50, width: 50,
-          decoration: BoxDecoration(color: kAccent.withOpacity(0.15), shape: BoxShape.circle),
-          child: const Icon(Icons.admin_panel_settings_rounded, color: kAccent)),
-      const SizedBox(width: 14),
-      const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('CleftTune Admin',
-            style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-        SizedBox(height: 2),
-        Text('Realtime database overview', style: TextStyle(color: Colors.white60)),
-      ])),
-      IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_none_rounded)),
-    ]);
-  }
-}
-
 class _PageTitle extends StatelessWidget {
   final IconData icon; final String title, subtitle;
   const _PageTitle({required this.icon, required this.title, required this.subtitle});
@@ -1607,7 +1714,7 @@ class _PageTitle extends StatelessWidget {
           child: Icon(icon, color: kAccent)),
       const SizedBox(width: 14),
       Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(title, style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+        Text(title,    style: const TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
         Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 13)),
       ]),
     ]);
@@ -1643,9 +1750,9 @@ class _StatCard extends StatelessWidget {
     return _GlassPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       CircleAvatar(backgroundColor: iconColor.withOpacity(0.18), child: Icon(icon, color: iconColor)),
       const Spacer(),
-      Text(title,  style: const TextStyle(color: Colors.white70)),
+      Text(title,   style: const TextStyle(color: Colors.white70)),
       const SizedBox(height: 6),
-      Text(value,  style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: Colors.white)),
+      Text(value,   style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: Colors.white)),
       const SizedBox(height: 4),
       Text(subtitle, style: TextStyle(color: iconColor, fontSize: 12)),
     ]));
