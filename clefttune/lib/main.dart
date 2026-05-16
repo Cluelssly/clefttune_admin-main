@@ -35,19 +35,40 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-
 import 'firebase_options.dart';
+import 'landingpage.dart';
+import 'notifications.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+
   @override
-  Widget build(BuildContext context) => const CleftTuneAdminApp();
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'CleftTune Admin',
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: kBg,
+        fontFamily: 'Arial',
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: kAccent,
+          brightness: Brightness.dark,
+        ),
+      ),
+      home: const NotificationProvider(child: AdminLandingPage()),
+    );
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -113,32 +134,6 @@ PaymentStatus _parseStatus(String? s) {
 }
 
 // ─────────────────────────────────────────────
-// APP
-// ─────────────────────────────────────────────
-class CleftTuneAdminApp extends StatelessWidget {
-  const CleftTuneAdminApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'CleftTune Admin',
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: kBg,
-        fontFamily: 'Arial',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: kAccent,
-          brightness: Brightness.dark,
-        ),
-      ),
-      home: const AdminShell(),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────
 // SHELL
 // ─────────────────────────────────────────────
 class AdminShell extends StatefulWidget {
@@ -190,7 +185,6 @@ class _AdminShellState extends State<AdminShell> {
                 .where((d) => _parseStatus(d.data()['status']) == PaymentStatus.pending)
                 .length;
 
-            // ── Drawer content shared by both mobile drawer and desktop sidebar
             final sidebarContent = _SidebarContent(
               selectedIndex:   _selectedIndex,
               navItems:        _navItems,
@@ -204,7 +198,6 @@ class _AdminShellState extends State<AdminShell> {
             return Scaffold(
               key: _scaffoldKey,
               backgroundColor: kBg,
-              // ── Mobile drawer ──────────────────────────────────────────────
               drawer: isMobile
                   ? Drawer(
                       backgroundColor: kSidebar,
@@ -216,7 +209,6 @@ class _AdminShellState extends State<AdminShell> {
                   children: [
                     Row(
                       children: [
-                        // ── Desktop sidebar ──────────────────────────────────
                         if (!isMobile) sidebarContent,
                         Expanded(
                           child: hasError
@@ -227,8 +219,6 @@ class _AdminShellState extends State<AdminShell> {
                         ),
                       ],
                     ),
-
-                    // ── Mobile hamburger FAB (always on top) ─────────────────
                     if (isMobile)
                       Positioned(
                         top: 12,
@@ -280,7 +270,6 @@ class _HamburgerButton extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: [
-            // Hamburger icon — three lines
             Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -291,7 +280,6 @@ class _HamburgerButton extends StatelessWidget {
                 _HamburgerLine(width: 18),
               ],
             ),
-            // Badge for pending payments
             if (pendingCount > 0)
               Positioned(
                 top: 6,
@@ -1076,37 +1064,61 @@ class DashboardPage extends StatelessWidget {
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         isMobile ? 12 : 24,
-        isMobile ? 68 : 20,   // extra top padding on mobile for hamburger button
+        isMobile ? 68 : 20,
         isMobile ? 12 : 24,
         20,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _DashboardHeader(),
+          const _DashboardHeader(),
           const SizedBox(height: 24),
 
+          // ── STAT CARDS ──────────────────────────────────────────
+          // Mobile: 2-column compact horizontal cards
+          // Desktop: 4-column taller cards
           LayoutBuilder(builder: (context, constraints) {
-            int cols = 1;
-            if (constraints.maxWidth > 1200) cols = 4;
-            else if (constraints.maxWidth > 700) cols = 2;
+            final isMobileLayout = constraints.maxWidth <= 700;
+            int cols;
+            double aspectRatio;
+            if (constraints.maxWidth > 1200) {
+              cols = 4; aspectRatio = 1.25;
+            } else if (constraints.maxWidth > 700) {
+              cols = 2; aspectRatio = 1.6;
+            } else {
+              cols = 2; aspectRatio = 2.2; // wide & short on mobile
+            }
             return GridView.count(
               crossAxisCount: cols, shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 16, mainAxisSpacing: 16, childAspectRatio: 1.25,
+              crossAxisSpacing: isMobileLayout ? 10 : 16,
+              mainAxisSpacing:  isMobileLayout ? 10 : 16,
+              childAspectRatio: aspectRatio,
               children: [
-                _StatCard(title: 'Total Users',      value: '${stats.total}',
-                    icon: Icons.people_alt_rounded,
-                    subtitle: 'All registered users',              iconColor: kAccent),
-                _StatCard(title: 'Free Users',       value: '${stats.free}',
-                    icon: Icons.star_rounded,
-                    subtitle: '${(stats.freePercent * 100).toStringAsFixed(1)}%',    iconColor: kPurple),
-                _StatCard(title: 'Premium Users',    value: '${stats.premium}',
-                    icon: Icons.diamond_rounded,
-                    subtitle: '${(stats.premiumPercent * 100).toStringAsFixed(1)}%', iconColor: kBlue),
-                _StatCard(title: 'Verified Revenue', value: '₱${stats.verifiedRevenue}',
-                    icon: Icons.account_balance_wallet_rounded,
-                    subtitle: '₱${stats.pendingRevenue} pending',  iconColor: kAccent),
+                _StatCard(
+                  title: 'Total Users', value: '${stats.total}',
+                  icon: Icons.people_alt_rounded,
+                  subtitle: 'All registered users', iconColor: kAccent,
+                  compact: isMobileLayout,
+                ),
+                _StatCard(
+                  title: 'Free Users', value: '${stats.free}',
+                  icon: Icons.star_rounded,
+                  subtitle: '${(stats.freePercent * 100).toStringAsFixed(1)}%',
+                  iconColor: kPurple, compact: isMobileLayout,
+                ),
+                _StatCard(
+                  title: 'Premium Users', value: '${stats.premium}',
+                  icon: Icons.diamond_rounded,
+                  subtitle: '${(stats.premiumPercent * 100).toStringAsFixed(1)}%',
+                  iconColor: kBlue, compact: isMobileLayout,
+                ),
+                _StatCard(
+                  title: 'Revenue', value: '₱${stats.verifiedRevenue}',
+                  icon: Icons.account_balance_wallet_rounded,
+                  subtitle: '₱${stats.pendingRevenue} pending',
+                  iconColor: kAccent, compact: isMobileLayout,
+                ),
               ],
             );
           }),
@@ -1186,8 +1198,6 @@ class DashboardPage extends StatelessWidget {
   }
 }
 
-/// Dashboard header — no hamburger here; the hamburger is rendered
-/// by AdminShell as a Stack overlay so it appears on every page.
 class _DashboardHeader extends StatelessWidget {
   const _DashboardHeader();
 
@@ -1204,7 +1214,7 @@ class _DashboardHeader extends StatelessWidget {
         SizedBox(height: 2),
         Text('Realtime database overview', style: TextStyle(color: Colors.white60)),
       ])),
-      IconButton(onPressed: () {}, icon: const Icon(Icons.notifications_none_rounded)),
+      const NotificationBell(),
     ]);
   }
 }
@@ -1326,42 +1336,47 @@ class _UsersPageState extends State<UsersPage> {
 
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(24, isMobile ? 68 : 24, 24, 24),
+      // ── FIX: align everything to the top, not centred ──
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.start,
+        mainAxisSize: MainAxisSize.max,
         children: [
           _PageTitle(icon: Icons.people_alt_rounded,
               title: 'Users', subtitle: '${widget.docs.length} total users'),
           const SizedBox(height: 20),
 
-          // Search bar + filter chips (wrap on mobile)
           isMobile
-              ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  TextField(
-                    onChanged: (v) => setState(() => _search = v.toLowerCase()),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                      hintText: 'Search by name or email...',
-                      hintStyle: const TextStyle(color: Colors.white38),
-                      prefixIcon: const Icon(Icons.search, color: Colors.white38),
-                      filled: true, fillColor: kPanel.withOpacity(0.72),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
-                          borderSide: const BorderSide(color: kAccent)),
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextField(
+                      onChanged: (v) => setState(() => _search = v.toLowerCase()),
+                      style: const TextStyle(color: Colors.white),
+                      decoration: InputDecoration(
+                        hintText: 'Search by name or email...',
+                        hintStyle: const TextStyle(color: Colors.white38),
+                        prefixIcon: const Icon(Icons.search, color: Colors.white38),
+                        filled: true, fillColor: kPanel.withOpacity(0.72),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: kAccent.withOpacity(0.2))),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: kAccent)),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  Wrap(spacing: 8, runSpacing: 8, children: [
-                    _FilterChip(label: 'All',     selected: _filter == 'all',
-                        onTap: () => setState(() => _filter = 'all')),
-                    _FilterChip(label: 'Free',    selected: _filter == 'free',    color: kPurple,
-                        onTap: () => setState(() => _filter = 'free')),
-                    _FilterChip(label: 'Premium', selected: _filter == 'premium', color: kAccent,
-                        onTap: () => setState(() => _filter = 'premium')),
-                  ]),
-                ])
+                    const SizedBox(height: 12),
+                    Wrap(spacing: 8, runSpacing: 8, children: [
+                      _FilterChip(label: 'All',     selected: _filter == 'all',
+                          onTap: () => setState(() => _filter = 'all')),
+                      _FilterChip(label: 'Free',    selected: _filter == 'free',    color: kPurple,
+                          onTap: () => setState(() => _filter = 'free')),
+                      _FilterChip(label: 'Premium', selected: _filter == 'premium', color: kAccent,
+                          onTap: () => setState(() => _filter = 'premium')),
+                    ]),
+                  ],
+                )
               : Row(children: [
                   Expanded(
                     child: TextField(
@@ -1395,25 +1410,28 @@ class _UsersPageState extends State<UsersPage> {
           const SizedBox(height: 20),
 
           if (filtered.isEmpty)
-            _GlassPanel(child: const Center(child: Padding(
+            _GlassPanel(child: const Padding(
               padding: EdgeInsets.all(32),
-              child: Text('No users found.', style: TextStyle(color: Colors.white60)))))
+              child: Text('No users found.', style: TextStyle(color: Colors.white60))))
           else
             _GlassPanel(
               padding: EdgeInsets.zero,
-              child: Column(children: [
-                for (int i = 0; i < filtered.length; i++) ...[
-                  if (i != 0) Divider(color: Colors.white.withOpacity(0.06), height: 1),
-                  _UserRowEditable(
-                    doc:      filtered[i],
-                    onDelete: () => _deleteUser(filtered[i].id),
-                    onEdit:   () => _editSubscription(
-                      filtered[i].id,
-                      _isPremium(filtered[i].data()) ? 'premium' : 'free',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (int i = 0; i < filtered.length; i++) ...[
+                    if (i != 0) Divider(color: Colors.white.withOpacity(0.06), height: 1),
+                    _UserRowEditable(
+                      doc:      filtered[i],
+                      onDelete: () => _deleteUser(filtered[i].id),
+                      onEdit:   () => _editSubscription(
+                        filtered[i].id,
+                        _isPremium(filtered[i].data()) ? 'premium' : 'free',
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              ]),
+              ),
             ),
         ],
       ),
@@ -1740,22 +1758,79 @@ class _GlassPanel extends StatelessWidget {
   }
 }
 
+// ── _StatCard now accepts an optional `compact` flag ──────────────
 class _StatCard extends StatelessWidget {
-  final String title, value, subtitle; final IconData icon; final Color iconColor;
-  const _StatCard({required this.title, required this.value, required this.subtitle,
-      required this.icon, required this.iconColor});
+  final String title, value, subtitle;
+  final IconData icon;
+  final Color iconColor;
+  final bool compact;
+
+  const _StatCard({
+    required this.title,
+    required this.value,
+    required this.subtitle,
+    required this.icon,
+    required this.iconColor,
+    this.compact = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return _GlassPanel(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      CircleAvatar(backgroundColor: iconColor.withOpacity(0.18), child: Icon(icon, color: iconColor)),
-      const Spacer(),
-      Text(title,   style: const TextStyle(color: Colors.white70)),
-      const SizedBox(height: 6),
-      Text(value,   style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: Colors.white)),
-      const SizedBox(height: 4),
-      Text(subtitle, style: TextStyle(color: iconColor, fontSize: 12)),
-    ]));
+    if (compact) {
+      // Horizontal compact layout for mobile
+      return _GlassPanel(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: iconColor.withOpacity(0.18),
+              child: Icon(icon, color: iconColor, size: 16),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(title,
+                      style: const TextStyle(color: Colors.white60, fontSize: 11),
+                      overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(value,
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white)),
+                  Text(subtitle,
+                      style: TextStyle(color: iconColor, fontSize: 10),
+                      overflow: TextOverflow.ellipsis, maxLines: 1),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Default vertical layout for tablet/desktop
+    return _GlassPanel(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircleAvatar(radius: 18,
+              backgroundColor: iconColor.withOpacity(0.18),
+              child: Icon(icon, color: iconColor, size: 18)),
+          const SizedBox(height: 10),
+          Text(title,    style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          const SizedBox(height: 4),
+          Text(value,    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 2),
+          Text(subtitle, style: TextStyle(color: iconColor, fontSize: 11),
+              overflow: TextOverflow.ellipsis, maxLines: 1),
+        ],
+      ),
+    );
   }
 }
 
