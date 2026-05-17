@@ -25,11 +25,18 @@
 //     • rejectedAt      Timestamp
 //     • rejectionReason String
 //     • notes           String
+//     • isDemo          bool      true = auto-generated fake payment
 //
 // When admin VERIFIES a payment, ALL three user fields are written:
 //   subscription = "premium", plan = "premium", isPremium = true
 // When admin REJECTS or manually sets FREE:
 //   subscription = "free",    plan = "free",    isPremium = false
+//
+// AUTO DEMO PAYMENT:
+//   Whenever a user is manually upgraded to Premium via _editSubscription,
+//   a fake verified payment doc is auto-created in payments/ with:
+//     isDemo = true, status = "verified", referenceNumber = "DEMO-<timestamp>"
+//   This makes revenue/payment stats reflect the upgrade on all pages.
 // ═══════════════════════════════════════════════════════════════════
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -53,20 +60,30 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'CleftTune Admin',
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: kBg,
-        fontFamily: 'Arial',
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: kAccent,
+    // ── FIX: NotificationProvider MUST wrap the entire widget tree ──
+    // Previously it only wrapped AdminLandingPage, which meant that
+    // any screen pushed via Navigator.push (e.g. AdminShell) lived in
+    // a separate subtree and NotificationProvider.of(context) returned
+    // null — so no listeners were ever attached and no notifications fired.
+    //
+    // By wrapping the whole MaterialApp, every route (including pushed
+    // ones) shares the same NotificationProvider ancestor.
+    return NotificationProvider(
+      child: MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'CleftTune Admin',
+        theme: ThemeData(
+          useMaterial3: true,
           brightness: Brightness.dark,
+          scaffoldBackgroundColor: kBg,
+          fontFamily: 'Arial',
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: kAccent,
+            brightness: Brightness.dark,
+          ),
         ),
+        home: const AdminLandingPage(),
       ),
-      home: const NotificationProvider(child: AdminLandingPage()),
     );
   }
 }
@@ -118,6 +135,29 @@ String _formatDate(dynamic ts) {
   } catch (_) {
     return '—';
   }
+}
+
+// ─────────────────────────────────────────────
+// AUTO DEMO PAYMENT HELPER
+// Called whenever a user is manually set to Premium.
+// Writes a fake verified payment doc so all pages reflect the revenue.
+// ─────────────────────────────────────────────
+Future<void> _createDemoPayment(String userId) async {
+  final refNumber = 'DEMO-${DateTime.now().millisecondsSinceEpoch}';
+  final methods = ['gcash', 'maya'];
+  final method  = methods[DateTime.now().millisecondsSinceEpoch % 2];
+
+  await FirebaseFirestore.instance.collection('payments').add({
+    'userId':          userId,
+    'method':          method,
+    'referenceNumber': refNumber,
+    'amount':          kPremiumPrice,
+    'status':          'verified',
+    'isDemo':          true,
+    'createdAt':       FieldValue.serverTimestamp(),
+    'verifiedAt':      FieldValue.serverTimestamp(),
+    'notes':           'Auto-generated demo payment',
+  });
 }
 
 // ─────────────────────────────────────────────
@@ -644,6 +684,7 @@ class _PaymentsPageState extends State<PaymentsPage> {
     final data     = doc.data();
     final userData = _userDataFor(data['userId']);
     final status   = _parseStatus(data['status']);
+    final isDemo   = data['isDemo'] == true;
 
     await showDialog(
       context: context,
@@ -654,6 +695,19 @@ class _PaymentsPageState extends State<PaymentsPage> {
           const Icon(Icons.receipt_long_rounded, color: kAccent, size: 20),
           const SizedBox(width: 8),
           const Text('Payment Details', style: TextStyle(color: Colors.white)),
+          if (isDemo) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: kGold.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: kGold.withOpacity(0.5)),
+              ),
+              child: const Text('DEMO',
+                  style: TextStyle(color: kGold, fontSize: 10, fontWeight: FontWeight.bold)),
+            ),
+          ],
         ]),
         content: SizedBox(
           width: 380,
@@ -839,6 +893,7 @@ class _PaymentsPageState extends State<PaymentsPage> {
                 _FieldGuideRow('isPremium',    'bool',      'true | false        — read by CleftTune PremiumGate'),
                 _FieldGuideRow('upgradedAt',   'Timestamp', 'set on verify'),
                 _FieldGuideRow('cancelledAt',  'Timestamp', 'set on cancel'),
+                _FieldGuideRow('isDemo',       'bool',      'true = auto-generated demo payment record'),
               ],
             ),
           ),
@@ -870,6 +925,7 @@ class _PaymentRow extends StatelessWidget {
     final ref    = data['referenceNumber'] ?? '—';
     final amount = data['amount'] ?? kPremiumPrice;
     final status = _parseStatus(data['status']);
+    final isDemo = data['isDemo'] == true;
 
     return InkWell(
       onTap: onTap,
@@ -879,7 +935,22 @@ class _PaymentRow extends StatelessWidget {
           Expanded(flex: 3, child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+              Row(children: [
+                Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                if (isDemo) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: kGold.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(5),
+                      border: Border.all(color: kGold.withOpacity(0.45)),
+                    ),
+                    child: const Text('DEMO',
+                        style: TextStyle(color: kGold, fontSize: 9, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ]),
               if (email.isNotEmpty)
                 Text(email, style: const TextStyle(color: Colors.white38, fontSize: 11)),
             ],
@@ -1074,9 +1145,6 @@ class DashboardPage extends StatelessWidget {
           const _DashboardHeader(),
           const SizedBox(height: 24),
 
-          // ── STAT CARDS ──────────────────────────────────────────
-          // Mobile: 2-column compact horizontal cards
-          // Desktop: 4-column taller cards
           LayoutBuilder(builder: (context, constraints) {
             final isMobileLayout = constraints.maxWidth <= 700;
             int cols;
@@ -1086,7 +1154,7 @@ class DashboardPage extends StatelessWidget {
             } else if (constraints.maxWidth > 700) {
               cols = 2; aspectRatio = 1.6;
             } else {
-              cols = 2; aspectRatio = 2.2; // wide & short on mobile
+              cols = 2; aspectRatio = 2.2;
             }
             return GridView.count(
               crossAxisCount: cols, shrinkWrap: true,
@@ -1302,13 +1370,28 @@ class _UsersPageState extends State<UsersPage> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: kAccent),
             onPressed: () async {
-              final fields = newPlan == 'premium' ? _premiumFields() : _freeFields();
-              await FirebaseFirestore.instance.collection('users').doc(docId).update(fields);
+              final wasPremium    = currentPlan == 'premium';
+              final willBePremium = newPlan == 'premium';
+              final fields        = willBePremium ? _premiumFields() : _freeFields();
+
+              await FirebaseFirestore.instance.collection('users').doc(docId).update({
+                ...fields,
+                if (willBePremium) 'upgradedAt': FieldValue.serverTimestamp(),
+              });
+
+              if (!wasPremium && willBePremium) {
+                await _createDemoPayment(docId);
+              }
+
               if (mounted) Navigator.pop(context);
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text('Subscription updated to $newPlan.'),
-                  backgroundColor: kAccent.withOpacity(0.8),
+                  content: Text(
+                    willBePremium
+                        ? '⭐ Upgraded to Premium — demo payment record created.'
+                        : 'Subscription updated to free.',
+                  ),
+                  backgroundColor: willBePremium ? kAccent.withOpacity(0.85) : kPurple.withOpacity(0.85),
                 ));
               }
             },
@@ -1336,7 +1419,6 @@ class _UsersPageState extends State<UsersPage> {
 
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(24, isMobile ? 68 : 24, 24, 24),
-      // ── FIX: align everything to the top, not centred ──
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.start,
@@ -1758,7 +1840,6 @@ class _GlassPanel extends StatelessWidget {
   }
 }
 
-// ── _StatCard now accepts an optional `compact` flag ──────────────
 class _StatCard extends StatelessWidget {
   final String title, value, subtitle;
   final IconData icon;
@@ -1777,7 +1858,6 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (compact) {
-      // Horizontal compact layout for mobile
       return _GlassPanel(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
@@ -1811,7 +1891,6 @@ class _StatCard extends StatelessWidget {
       );
     }
 
-    // Default vertical layout for tablet/desktop
     return _GlassPanel(
       padding: const EdgeInsets.all(14),
       child: Column(

@@ -1,36 +1,13 @@
 // ═══════════════════════════════════════════════════════════════════
 // CLEFTTUNE ADMIN — notifications.dart
-//
-// Real-time notification system. Listens to Firestore for:
-//   • New user registrations        (users collection, new docs)
-//   • New premium user              (users collection, isPremium set to true)
-//   • Account deleted               (users collection, doc removed)
-//   • Profile updated               (users collection, name/email changed)
-//   • Payment submitted (pending)   (payments collection, status=pending)
-//   • Payment verified              (payments collection, status=verified)
-//   • Payment rejected              (payments collection, status=rejected)
-//   • Payment expired               (payments collection, status=expired)
-//   • Premium cancelled             (users collection, cancelledAt field set)
-//   • Premium expired               (users collection, premiumUntil lapses)
-//
-// HOW TO INTEGRATE into main.dart:
-//   1. Import this file:
-//        import 'notifications.dart';
-//
-//   2. Wrap your AdminShell (or top-level widget) with NotificationProvider:
-//        home: NotificationProvider(child: const AdminShell()),
-//
-//   3. Replace the empty notification IconButton in _DashboardHeader with:
-//        NotificationBell()
-//
-// That's it — everything else is automatic.
+// Notifications are persisted to Firestore: adminNotifications/{id}
 // ═══════════════════════════════════════════════════════════════════
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 // ─────────────────────────────────────────────
-// THEME (mirrors main.dart constants)
+// THEME
 // ─────────────────────────────────────────────
 const _kBg     = Color(0xFF020C12);
 const _kPanel  = Color(0xFF0B2E39);
@@ -41,6 +18,12 @@ const _kRed    = Color(0xFFFF4D6A);
 const _kGreen  = Color(0xFF00E096);
 const _kBlue   = Color(0xFF2D9CFF);
 const _kOrange = Color(0xFFFF8C42);
+const _kPremiumPrice = 99;
+
+// ─────────────────────────────────────────────
+// FIRESTORE COLLECTION
+// ─────────────────────────────────────────────
+final _notifCol = FirebaseFirestore.instance.collection('adminNotifications');
 
 // ─────────────────────────────────────────────
 // NOTIFICATION MODEL
@@ -56,6 +39,13 @@ enum NotifType {
   paymentExpired,
   premiumCancelled,
   premiumExpired,
+}
+
+NotifType _notifTypeFromString(String s) {
+  return NotifType.values.firstWhere(
+    (e) => e.name == s,
+    orElse: () => NotifType.newUser,
+  );
 }
 
 class AdminNotification {
@@ -75,6 +65,35 @@ class AdminNotification {
     this.isRead = false,
   });
 
+  // ── Firestore serialisation ──────────────────────────────────────
+  factory AdminNotification.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data()!;
+    DateTime time;
+    try {
+      time = (data['time'] as Timestamp).toDate();
+    } catch (_) {
+      time = DateTime.now();
+    }
+    return AdminNotification(
+      id:     doc.id,
+      type:   _notifTypeFromString(data['type'] ?? 'newUser'),
+      title:  data['title']  ?? '',
+      body:   data['body']   ?? '',
+      time:   time,
+      isRead: data['isRead'] == true,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+    'type':    type.name,
+    'title':   title,
+    'body':    body,
+    'time':    Timestamp.fromDate(time),
+    'isRead':  isRead,
+    'savedAt': FieldValue.serverTimestamp(),
+  };
+
+  // ── Display helpers ──────────────────────────────────────────────
   Color get color {
     switch (type) {
       case NotifType.newUser:          return _kAccent;
@@ -105,7 +124,6 @@ class AdminNotification {
     }
   }
 
-  /// Category label used for filter chips
   String get category {
     switch (type) {
       case NotifType.newUser:
@@ -136,7 +154,7 @@ class AdminNotification {
 }
 
 // ─────────────────────────────────────────────
-// NOTIFICATION PROVIDER (InheritedWidget)
+// NOTIFICATION PROVIDER
 // ─────────────────────────────────────────────
 class NotificationProvider extends StatefulWidget {
   final Widget child;
@@ -151,29 +169,30 @@ class NotificationProvider extends StatefulWidget {
 }
 
 class _NotificationProviderState extends State<NotificationProvider> {
+  // In-memory list (kept in sync with Firestore)
   final List<AdminNotification> _notifications = [];
 
-  // Track doc IDs / state keys we've already seen so we don't re-fire on start
+  // Guards to avoid firing notifications for docs that existed before this
+  // session started (populated during the first Firestore load)
   final Set<String> _seenUserIds    = {};
   final Set<String> _seenPaymentIds = {};
-
-  // Snapshot of user field values on first load (for change-detection)
   final Map<String, Map<String, dynamic>> _userSnapshots = {};
+  final Set<String> _autoPaymentCreated = {};
 
-  bool _initialUserLoad    = true;
-  bool _initialPaymentLoad = true;
+  bool _initialUserLoad       = true;
+  bool _initialPaymentLoad    = true;
+  bool _initialNotifLoad      = true; // true while we're reading saved notifs
 
-  late final List<dynamic> _subs; // StreamSubscription list
+  late final List<dynamic> _subs;
 
-  List<AdminNotification> get notifications =>
-      List.unmodifiable(_notifications);
-
+  List<AdminNotification> get notifications => List.unmodifiable(_notifications);
   int get unreadCount => _notifications.where((n) => !n.isRead).length;
 
   @override
   void initState() {
     super.initState();
     _subs = [
+      _listenSavedNotifications(), // ← load persisted notifications first
       _listenUsers(),
       _listenPayments(),
     ];
@@ -185,18 +204,101 @@ class _NotificationProviderState extends State<NotificationProvider> {
     super.dispose();
   }
 
-  // ── USERS listener ──────────────────────────────────────────────
+  // ── LOAD PERSISTED NOTIFICATIONS FROM FIRESTORE ──────────────────
+  // Listens to adminNotifications/ ordered by time descending.
+  // On first snapshot: populates in-memory list from Firestore.
+  // On subsequent changes: reflects mark-read / clear-all edits made
+  // on other admin devices.
+  dynamic _listenSavedNotifications() {
+    return _notifCol
+        .orderBy('time', descending: true)
+        .limit(100)
+        .snapshots()
+        .listen((snap) {
+      if (_initialNotifLoad) {
+        // Seed the in-memory list from persisted docs
+        setState(() {
+          _notifications.clear();
+          for (final doc in snap.docs) {
+            try {
+              _notifications.add(AdminNotification.fromDoc(doc));
+            } catch (_) {}
+          }
+        });
+        _initialNotifLoad = false;
+        return;
+      }
+
+      // After initial load: keep in-memory list in sync with Firestore changes
+      // (covers mark-read and delete operations from other sessions)
+      for (final change in snap.docChanges) {
+        if (change.type == DocumentChangeType.removed) {
+          setState(() => _notifications.removeWhere((n) => n.id == change.doc.id));
+        } else if (change.type == DocumentChangeType.modified) {
+          final idx = _notifications.indexWhere((n) => n.id == change.doc.id);
+          if (idx != -1 && change.doc.data() != null) {
+            setState(() {
+              _notifications[idx].isRead = change.doc.data()!['isRead'] == true;
+            });
+          }
+        }
+        // Added: new notifications are added via _add(), not here, to avoid duplicates
+      }
+    });
+  }
+
+  // ── WRITE NEW NOTIFICATION TO FIRESTORE ──────────────────────────
+  Future<void> _persistNotif(AdminNotification notif) async {
+    try {
+      await _notifCol.doc(notif.id).set(notif.toMap());
+    } catch (e) {
+      debugPrint('Failed to persist notification: $e');
+    }
+  }
+
+  // ── AUTO-CREATE PAYMENT ──────────────────────────────────────────
+  Future<void> _ensurePaymentExists(String userId, Map<String, dynamic> userData) async {
+    if (_autoPaymentCreated.contains(userId)) return;
+    _autoPaymentCreated.add(userId);
+
+    final existing = await FirebaseFirestore.instance
+        .collection('payments')
+        .where('userId', isEqualTo: userId)
+        .where('status', isEqualTo: 'verified')
+        .limit(1)
+        .get();
+
+    if (existing.docs.isNotEmpty) return;
+
+    final methods   = ['gcash', 'maya'];
+    final method    = methods[DateTime.now().millisecondsSinceEpoch % 2];
+    final refNumber = 'AUTO-${DateTime.now().millisecondsSinceEpoch}';
+
+    await FirebaseFirestore.instance.collection('payments').add({
+      'userId':          userId,
+      'userName':        userData['name']  ?? '',
+      'userEmail':       userData['email'] ?? '',
+      'method':          method,
+      'referenceNumber': refNumber,
+      'amount':          _kPremiumPrice,
+      'status':          'verified',
+      'isDemo':          true,
+      'notes':           'Auto-generated when user upgraded to Premium',
+      'createdAt':       FieldValue.serverTimestamp(),
+      'verifiedAt':      FieldValue.serverTimestamp(),
+    });
+  }
+
+  // ── USERS LISTENER ──────────────────────────────────────────────
   dynamic _listenUsers() {
     return FirebaseFirestore.instance
         .collection('users')
         .snapshots()
         .listen((snap) {
-      // ── First load: seed seen sets, don't fire for existing docs ──
       if (_initialUserLoad) {
         for (final doc in snap.docs) {
           _seenUserIds.add(doc.id);
           final data = doc.data();
-          // Store a snapshot for change-detection later
           _userSnapshots[doc.id] = {
             'name':         data['name'],
             'email':        data['email'],
@@ -204,6 +306,9 @@ class _NotificationProviderState extends State<NotificationProvider> {
             'cancelledAt':  data['cancelledAt'],
             'premiumUntil': data['premiumUntil'],
           };
+          if (data['isPremium'] == true) {
+            _autoPaymentCreated.add(doc.id);
+          }
         }
         _initialUserLoad = false;
         return;
@@ -212,13 +317,14 @@ class _NotificationProviderState extends State<NotificationProvider> {
       for (final change in snap.docChanges) {
         final data = change.doc.data();
 
-        // ── ACCOUNT DELETED ─────────────────────────────────────────
+        // ── ACCOUNT DELETED ────────────────────────────────────────
         if (change.type == DocumentChangeType.removed) {
-          final prev = _userSnapshots[change.doc.id];
+          final prev  = _userSnapshots[change.doc.id];
           final name  = prev?['name']  ?? 'A user';
           final email = prev?['email'] ?? '—';
           _seenUserIds.remove(change.doc.id);
           _userSnapshots.remove(change.doc.id);
+          _autoPaymentCreated.remove(change.doc.id);
           _add(AdminNotification(
             id:    'deleted_${change.doc.id}_${DateTime.now().millisecondsSinceEpoch}',
             type:  NotifType.accountDeleted,
@@ -231,7 +337,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
 
         if (data == null) continue;
 
-        // ── NEW USER REGISTERED ─────────────────────────────────────
+        // ── NEW USER REGISTERED ────────────────────────────────────
         if (change.type == DocumentChangeType.added &&
             !_seenUserIds.contains(change.doc.id)) {
           _seenUserIds.add(change.doc.id);
@@ -242,6 +348,9 @@ class _NotificationProviderState extends State<NotificationProvider> {
             'cancelledAt':  data['cancelledAt'],
             'premiumUntil': data['premiumUntil'],
           };
+          if (data['isPremium'] == true) {
+            _ensurePaymentExists(change.doc.id, data);
+          }
           _add(AdminNotification(
             id:    'user_${change.doc.id}',
             type:  NotifType.newUser,
@@ -251,28 +360,30 @@ class _NotificationProviderState extends State<NotificationProvider> {
           ));
         }
 
-        // ── MODIFICATIONS ───────────────────────────────────────────
+        // ── MODIFICATIONS ──────────────────────────────────────────
         if (change.type == DocumentChangeType.modified) {
           final prev = _userSnapshots[change.doc.id] ?? {};
 
-          // 1. NEW PREMIUM USER — isPremium flipped to true
           final wasPremium = prev['isPremium'] == true;
           final isPremium  = data['isPremium'] == true;
+
+          // ── NEW PREMIUM USER ─────────────────────────────────────
           if (!wasPremium && isPremium) {
             final premId = 'newprem_${change.doc.id}';
             if (!_seenPaymentIds.contains(premId)) {
               _seenPaymentIds.add(premId);
+              _ensurePaymentExists(change.doc.id, data);
               _add(AdminNotification(
                 id:    premId,
                 type:  NotifType.newPremiumUser,
-                title: 'User upgraded to Premium',
-                body:  '${data['name'] ?? 'A user'} (${data['email'] ?? '—'}) is now a Premium member.',
-                time:  _tsToDate(data['premiumSince'] ?? data['updatedAt']),
+                title: 'User upgraded to Premium ⭐',
+                body:  '${data['name'] ?? 'A user'} (${data['email'] ?? '—'}) is now a Premium member. Revenue updated.',
+                time:  _tsToDate(data['upgradedAt'] ?? data['premiumSince']),
               ));
             }
           }
 
-          // 2. PREMIUM CANCELLED — cancelledAt field newly set
+          // ── PREMIUM CANCELLED ────────────────────────────────────
           final hadCancel = prev['cancelledAt'] != null;
           final hasCancel = data['cancelledAt'] != null;
           if (!hadCancel && hasCancel) {
@@ -289,8 +400,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
             }
           }
 
-          // 3. PREMIUM EXPIRED — premiumUntil was set but now null/cleared,
-          //    OR premiumUntil date has passed and isPremium flipped false
+          // ── PREMIUM EXPIRED ──────────────────────────────────────
           final hadPremiumUntil = prev['premiumUntil'] != null;
           final premiumUntilNow = data['premiumUntil'];
           final expiredId       = 'expired_${change.doc.id}';
@@ -308,16 +418,15 @@ class _NotificationProviderState extends State<NotificationProvider> {
             ));
           }
 
-          // 4. PROFILE UPDATED — name or email changed
+          // ── PROFILE UPDATED ──────────────────────────────────────
           final nameChanged  = prev['name']  != data['name'];
           final emailChanged = prev['email'] != data['email'];
           if (nameChanged || emailChanged) {
-            final updateId = 'profile_${change.doc.id}_${DateTime.now().millisecondsSinceEpoch}';
-            final changed  = <String>[];
+            final changed = <String>[];
             if (nameChanged)  changed.add('name');
             if (emailChanged) changed.add('email');
             _add(AdminNotification(
-              id:    updateId,
+              id:    'profile_${change.doc.id}_${DateTime.now().millisecondsSinceEpoch}',
               type:  NotifType.profileUpdated,
               title: 'Profile updated',
               body:  '${data['name'] ?? 'A user'} updated their ${changed.join(' & ')}.',
@@ -325,7 +434,6 @@ class _NotificationProviderState extends State<NotificationProvider> {
             ));
           }
 
-          // Always refresh local snapshot
           _userSnapshots[change.doc.id] = {
             'name':         data['name'],
             'email':        data['email'],
@@ -338,7 +446,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
     });
   }
 
-  // ── PAYMENTS listener ────────────────────────────────────────────
+  // ── PAYMENTS LISTENER ────────────────────────────────────────────
   dynamic _listenPayments() {
     return FirebaseFirestore.instance
         .collection('payments')
@@ -363,10 +471,14 @@ class _NotificationProviderState extends State<NotificationProvider> {
 
         final method = (data['method'] ?? '').toString().toUpperCase();
         final ref    = data['referenceNumber'] ?? '—';
-        final amount = data['amount'] ?? 99;
+        final amount = data['amount'] ?? _kPremiumPrice;
         final name   = data['userName'] ?? data['name'] ?? 'A user';
+        final isDemo = data['isDemo'] == true;
 
-        // PENDING — new payment submitted
+        // Skip auto-generated demo payments — internal bookkeeping only
+        if (isDemo) continue;
+
+        // PENDING
         if (change.type == DocumentChangeType.added && status == 'pending') {
           _add(AdminNotification(
             id:    'pay_pending_${change.doc.id}',
@@ -377,7 +489,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
           ));
         }
 
-        // VERIFIED — payment approved
+        // VERIFIED
         if (change.type == DocumentChangeType.modified && status == 'verified') {
           _add(AdminNotification(
             id:    'pay_verified_${change.doc.id}',
@@ -388,7 +500,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
           ));
         }
 
-        // REJECTED — payment denied
+        // REJECTED
         if (change.type == DocumentChangeType.modified && status == 'rejected') {
           final reason = data['rejectionReason'] ?? '';
           _add(AdminNotification(
@@ -401,7 +513,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
           ));
         }
 
-        // EXPIRED — payment link/session expired without action
+        // EXPIRED
         if ((change.type == DocumentChangeType.added ||
              change.type == DocumentChangeType.modified) &&
             status == 'expired') {
@@ -418,25 +530,47 @@ class _NotificationProviderState extends State<NotificationProvider> {
   }
 
   // ── HELPERS ──────────────────────────────────────────────────────
+
+  /// Add to in-memory list and persist to Firestore (idempotent via doc ID).
   void _add(AdminNotification notif) {
+    if (_notifications.any((n) => n.id == notif.id)) return; // already exists
     setState(() {
-      if (!_notifications.any((n) => n.id == notif.id)) {
-        _notifications.insert(0, notif);
-        if (_notifications.length > 100) _notifications.removeLast();
-      }
+      _notifications.insert(0, notif);
+      if (_notifications.length > 100) _notifications.removeLast();
     });
+    _persistNotif(notif); // fire-and-forget
   }
 
-  void markAllRead() => setState(() {
-    for (final n in _notifications) n.isRead = true;
-  });
-
-  void markRead(String id) => setState(() {
+  /// Mark a single notification as read in memory + Firestore.
+  void markRead(String id) {
     final idx = _notifications.indexWhere((n) => n.id == id);
-    if (idx != -1) _notifications[idx].isRead = true;
-  });
+    if (idx == -1) return;
+    setState(() => _notifications[idx].isRead = true);
+    _notifCol.doc(id).update({'isRead': true}).catchError((_) {});
+  }
 
-  void clearAll() => setState(() => _notifications.clear());
+  /// Mark all as read in memory + Firestore (batch write).
+  void markAllRead() {
+    setState(() {
+      for (final n in _notifications) n.isRead = true;
+    });
+    final batch = FirebaseFirestore.instance.batch();
+    for (final n in _notifications) {
+      batch.update(_notifCol.doc(n.id), {'isRead': true});
+    }
+    batch.commit().catchError((_) {});
+  }
+
+  /// Clear all from memory + Firestore (batch delete).
+  void clearAll() {
+    final ids = _notifications.map((n) => n.id).toList();
+    setState(() => _notifications.clear());
+    final batch = FirebaseFirestore.instance.batch();
+    for (final id in ids) {
+      batch.delete(_notifCol.doc(id));
+    }
+    batch.commit().catchError((_) {});
+  }
 
   DateTime _tsToDate(dynamic ts) {
     if (ts == null) return DateTime.now();
@@ -448,7 +582,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
 }
 
 // ─────────────────────────────────────────────
-// NOTIFICATION BELL (drop-in replacement)
+// NOTIFICATION BELL
 // ─────────────────────────────────────────────
 class NotificationBell extends StatelessWidget {
   const NotificationBell({super.key});
@@ -491,10 +625,7 @@ class NotificationBell extends StatelessWidget {
                 child: Text(
                   count > 99 ? '99+' : '$count',
                   style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 9,
-                    fontWeight: FontWeight.bold,
-                  ),
+                      color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
                 ),
               ),
             ),
@@ -514,8 +645,7 @@ class NotificationBell extends StatelessWidget {
         final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic);
         return SlideTransition(
           position: Tween<Offset>(
-            begin: const Offset(1, 0),
-            end: Offset.zero,
+            begin: const Offset(1, 0), end: Offset.zero,
           ).animate(curved),
           child: child,
         );
@@ -526,7 +656,7 @@ class NotificationBell extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-// NOTIFICATION PANEL (slide-in drawer)
+// NOTIFICATION PANEL
 // ─────────────────────────────────────────────
 class _NotificationPanel extends StatefulWidget {
   final _NotificationProviderState? provider;
@@ -571,32 +701,28 @@ class _NotificationPanelState extends State<_NotificationPanel> {
           child: SafeArea(
             child: Column(
               children: [
-                // ── HEADER ────────────────────────────────────────
+                // ── HEADER ────────────────────────────────────────────
                 Container(
                   padding: const EdgeInsets.fromLTRB(20, 20, 12, 16),
                   decoration: BoxDecoration(
                     color: _kPanel.withOpacity(0.6),
-                    border: Border(
-                        bottom: BorderSide(color: _kAccent.withOpacity(0.15))),
+                    border: Border(bottom: BorderSide(color: _kAccent.withOpacity(0.15))),
                   ),
                   child: Row(children: [
-                    const Icon(Icons.notifications_rounded,
-                        color: _kAccent, size: 22),
+                    const Icon(Icons.notifications_rounded, color: _kAccent, size: 22),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Notifications',
-                                style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold)),
-                            if (unread > 0)
-                              Text('$unread unread',
-                                  style: const TextStyle(
-                                      color: _kAccent, fontSize: 12)),
-                          ]),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        const Text('Notifications',
+                            style: TextStyle(color: Colors.white, fontSize: 18,
+                                fontWeight: FontWeight.bold)),
+                        Text(
+                          unread > 0 ? '$unread unread' : 'All caught up',
+                          style: TextStyle(
+                              color: unread > 0 ? _kAccent : Colors.white38,
+                              fontSize: 12),
+                        ),
+                      ]),
                     ),
                     if (unread > 0)
                       TextButton(
@@ -605,8 +731,7 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                           setState(() {});
                         },
                         child: const Text('Mark all read',
-                            style:
-                                TextStyle(color: _kAccent, fontSize: 12)),
+                            style: TextStyle(color: _kAccent, fontSize: 12)),
                       ),
                     if ((widget.provider?.notifications.length ?? 0) > 0)
                       IconButton(
@@ -619,74 +744,54 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                         },
                       ),
                     IconButton(
-                      icon: const Icon(Icons.close_rounded,
-                          color: Colors.white38),
+                      icon: const Icon(Icons.close_rounded, color: Colors.white38),
                       onPressed: () => Navigator.pop(context),
                     ),
                   ]),
                 ),
 
-                // ── FILTER CHIPS ──────────────────────────────────
+                // ── FILTER CHIPS ──────────────────────────────────────
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   decoration: BoxDecoration(
                     color: _kPanel.withOpacity(0.3),
-                    border: Border(
-                        bottom: BorderSide(
-                            color: Colors.white.withOpacity(0.06))),
+                    border: Border(bottom:
+                        BorderSide(color: Colors.white.withOpacity(0.06))),
                   ),
                   child: SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
                     child: Row(children: [
-                      _Chip(
-                          label: 'All',
-                          selected: _filter == 'all',
-                          onTap: () =>
-                              setState(() => _filter = 'all')),
+                      _Chip(label: 'All',      selected: _filter == 'all',
+                          onTap: () => setState(() => _filter = 'all')),
                       const SizedBox(width: 8),
-                      _Chip(
-                          label: 'Unread',
-                          selected: _filter == 'unread',
+                      _Chip(label: 'Unread',   selected: _filter == 'unread',
                           color: _kRed,
-                          onTap: () =>
-                              setState(() => _filter = 'unread')),
+                          onTap: () => setState(() => _filter = 'unread')),
                       const SizedBox(width: 8),
-                      _Chip(
-                          label: 'Payments',
-                          selected: _filter == 'payments',
+                      _Chip(label: 'Payments', selected: _filter == 'payments',
                           color: _kGold,
-                          onTap: () =>
-                              setState(() => _filter = 'payments')),
+                          onTap: () => setState(() => _filter = 'payments')),
                       const SizedBox(width: 8),
-                      _Chip(
-                          label: 'Users',
-                          selected: _filter == 'users',
+                      _Chip(label: 'Users',    selected: _filter == 'users',
                           color: _kBlue,
-                          onTap: () =>
-                              setState(() => _filter = 'users')),
+                          onTap: () => setState(() => _filter = 'users')),
                       const SizedBox(width: 8),
-                      _Chip(
-                          label: 'Premium',
-                          selected: _filter == 'premium',
+                      _Chip(label: 'Premium',  selected: _filter == 'premium',
                           color: _kPurple,
-                          onTap: () =>
-                              setState(() => _filter = 'premium')),
+                          onTap: () => setState(() => _filter = 'premium')),
                     ]),
                   ),
                 ),
 
-                // ── NOTIFICATION LIST ─────────────────────────────
+                // ── LIST ──────────────────────────────────────────────
                 Expanded(
                   child: items.isEmpty
                       ? _EmptyState(filter: _filter)
                       : ListView.separated(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 8),
+                          padding: const EdgeInsets.symmetric(vertical: 8),
                           itemCount: items.length,
-                          separatorBuilder: (_, __) => Divider(
-                              color: Colors.white.withOpacity(0.05),
-                              height: 1),
+                          separatorBuilder: (_, __) =>
+                              Divider(color: Colors.white.withOpacity(0.05), height: 1),
                           itemBuilder: (_, i) => _NotifTile(
                             notif: items[i],
                             onTap: () {
@@ -695,6 +800,25 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                             },
                           ),
                         ),
+                ),
+
+                // ── FOOTER ────────────────────────────────────────────
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  decoration: BoxDecoration(
+                    border: Border(top: BorderSide(color: _kAccent.withOpacity(0.1))),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.cloud_done_rounded, color: Colors.white24, size: 13),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Saved to Firestore · ${widget.provider?.notifications.length ?? 0} total',
+                        style: const TextStyle(color: Colors.white24, fontSize: 11),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -719,62 +843,46 @@ class _NotifTile extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        color: notif.isRead
-            ? Colors.transparent
-            : notif.color.withOpacity(0.06),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child:
-            Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Icon bubble
+        color: notif.isRead ? Colors.transparent : notif.color.withOpacity(0.06),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Container(
             width: 40, height: 40,
             decoration: BoxDecoration(
               color: notif.color.withOpacity(0.15),
               borderRadius: BorderRadius.circular(12),
-              border:
-                  Border.all(color: notif.color.withOpacity(0.3)),
+              border: Border.all(color: notif.color.withOpacity(0.3)),
             ),
             child: Icon(notif.icon, color: notif.color, size: 18),
           ),
           const SizedBox(width: 12),
-
-          // Content
           Expanded(
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(children: [
-                    Expanded(
-                      child: Text(notif.title,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: notif.isRead
-                                ? FontWeight.normal
-                                : FontWeight.bold,
-                            fontSize: 13,
-                          )),
-                    ),
-                    if (!notif.isRead)
-                      Container(
-                        width: 7, height: 7,
-                        decoration: BoxDecoration(
-                            color: notif.color,
-                            shape: BoxShape.circle),
-                      ),
-                  ]),
-                  const SizedBox(height: 4),
-                  Text(notif.body,
-                      style: const TextStyle(
-                          color: Colors.white60,
-                          fontSize: 12,
-                          height: 1.4)),
-                  const SizedBox(height: 6),
-                  Text(notif.timeLabel,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Row(children: [
+                Expanded(
+                  child: Text(notif.title,
                       style: TextStyle(
-                          color: notif.color.withOpacity(0.7),
-                          fontSize: 11)),
-                ]),
+                        color:      Colors.white,
+                        fontWeight: notif.isRead ? FontWeight.normal : FontWeight.bold,
+                        fontSize:   13,
+                      )),
+                ),
+                if (!notif.isRead)
+                  Container(
+                    width: 7, height: 7,
+                    decoration: BoxDecoration(
+                        color: notif.color, shape: BoxShape.circle),
+                  ),
+              ]),
+              const SizedBox(height: 4),
+              Text(notif.body,
+                  style: const TextStyle(
+                      color: Colors.white60, fontSize: 12, height: 1.4)),
+              const SizedBox(height: 6),
+              Text(notif.timeLabel,
+                  style: TextStyle(
+                      color: notif.color.withOpacity(0.7), fontSize: 11)),
+            ]),
           ),
         ]),
       ),
@@ -797,9 +905,7 @@ class _EmptyState extends StatelessWidget {
             color: Colors.white12, size: 56),
         const SizedBox(height: 16),
         Text(
-          filter == 'all'
-              ? 'No notifications yet'
-              : 'No $filter notifications',
+          filter == 'all' ? 'No notifications yet' : 'No $filter notifications',
           style: const TextStyle(color: Colors.white38, fontSize: 15),
         ),
         const SizedBox(height: 8),
@@ -814,13 +920,13 @@ class _EmptyState extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-// SMALL CHIP WIDGET
+// CHIP WIDGET
 // ─────────────────────────────────────────────
 class _Chip extends StatelessWidget {
-  final String       label;
-  final bool         selected;
+  final String label;
+  final bool selected;
   final VoidCallback onTap;
-  final Color        color;
+  final Color color;
 
   const _Chip({
     required this.label,
@@ -835,20 +941,17 @@ class _Chip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? color.withOpacity(0.15) : Colors.transparent,
           borderRadius: BorderRadius.circular(20),
-          border:
-              Border.all(color: selected ? color : Colors.white24),
+          border: Border.all(color: selected ? color : Colors.white24),
         ),
         child: Text(label,
             style: TextStyle(
               color:      selected ? color : Colors.white54,
-              fontWeight:
-                  selected ? FontWeight.bold : FontWeight.normal,
-              fontSize: 12,
+              fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+              fontSize:   12,
             )),
       ),
     );
