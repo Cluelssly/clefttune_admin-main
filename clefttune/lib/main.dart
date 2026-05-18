@@ -1,43 +1,4 @@
-// ═══════════════════════════════════════════════════════════════════
-// CLEFTTUNE ADMIN — main.dart
-//
-// FIRESTORE FIELD CONTRACT (synced with CleftTune user app):
-//
-//   users/{uid}
-//     • subscription  String   "premium" | "free"   ← read by admin
-//     • plan          String   "premium" | "free"   ← read by CleftTune SettingsScreen
-//     • isPremium     bool     true | false         ← read by CleftTune PremiumGate
-//     • email         String
-//     • name          String
-//     • createdAt     Timestamp
-//     • paymentMethod String   "gcash" | "maya"
-//     • upgradedAt    Timestamp
-//     • cancelledAt   Timestamp
-//
-//   payments/{docId}
-//     • userId          String    Firestore UID
-//     • method          String    "gcash" | "maya"
-//     • referenceNumber String
-//     • amount          Number    99
-//     • status          String    "pending" | "verified" | "rejected"
-//     • createdAt       Timestamp
-//     • verifiedAt      Timestamp
-//     • rejectedAt      Timestamp
-//     • rejectionReason String
-//     • notes           String
-//     • isDemo          bool      true = auto-generated fake payment
-//
-// When admin VERIFIES a payment, ALL three user fields are written:
-//   subscription = "premium", plan = "premium", isPremium = true
-// When admin REJECTS or manually sets FREE:
-//   subscription = "free",    plan = "free",    isPremium = false
-//
-// AUTO DEMO PAYMENT:
-//   Whenever a user is manually upgraded to Premium via _editSubscription,
-//   a fake verified payment doc is auto-created in payments/ with:
-//     isDemo = true, status = "verified", referenceNumber = "DEMO-<timestamp>"
-//   This makes revenue/payment stats reflect the upgrade on all pages.
-// ═══════════════════════════════════════════════════════════════════
+
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -60,14 +21,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ── FIX: NotificationProvider MUST wrap the entire widget tree ──
-    // Previously it only wrapped AdminLandingPage, which meant that
-    // any screen pushed via Navigator.push (e.g. AdminShell) lived in
-    // a separate subtree and NotificationProvider.of(context) returned
-    // null — so no listeners were ever attached and no notifications fired.
-    //
-    // By wrapping the whole MaterialApp, every route (including pushed
-    // ones) shares the same NotificationProvider ancestor.
+    
     return NotificationProvider(
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -800,10 +754,14 @@ class _PaymentsPageState extends State<PaymentsPage> {
 
           LayoutBuilder(builder: (ctx, constraints) {
             final cols = constraints.maxWidth > 700 ? 4 : 2;
+            // FIX: increased childAspectRatio on mobile so cards have
+            // enough height for their content (was 1.4, overflowed by 11px).
+            final ratio = constraints.maxWidth > 700 ? 1.4 : 1.7;
             return GridView.count(
               crossAxisCount: cols, shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.4,
+              crossAxisSpacing: 12, mainAxisSpacing: 12,
+              childAspectRatio: ratio,
               children: [
                 _StatCard(title: 'Total',    value: '${widget.paymentDocs.length}',
                     icon: Icons.receipt_rounded,          subtitle: 'All payments',    iconColor: kBlue),
@@ -846,30 +804,44 @@ class _PaymentsPageState extends State<PaymentsPage> {
             _GlassPanel(
               padding: EdgeInsets.zero,
               child: Column(children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Row(children: const [
-                    Expanded(flex: 3, child: Text('USER',
-                        style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold))),
-                    Expanded(flex: 2, child: Text('METHOD / REF',
-                        style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold))),
-                    Expanded(child: Text('AMOUNT',
-                        style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold))),
-                    Expanded(child: Text('STATUS',
-                        style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold))),
-                    SizedBox(width: 80),
-                  ]),
-                ),
-                Divider(color: Colors.white.withOpacity(0.06), height: 1),
+                // FIX: on mobile, hide the static header row and let each
+                // _PaymentRow render as a self-contained card to avoid
+                // the 20 px right overflow caused by too many flex columns
+                // in a narrow viewport.
+                if (!isMobile)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    child: Row(children: const [
+                      Expanded(flex: 3, child: Text('USER',
+                          style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold))),
+                      Expanded(flex: 2, child: Text('METHOD / REF',
+                          style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold))),
+                      Expanded(child: Text('AMOUNT',
+                          style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold))),
+                      Expanded(child: Text('STATUS',
+                          style: TextStyle(color: Colors.white38, fontSize: 11, fontWeight: FontWeight.bold))),
+                      SizedBox(width: 80),
+                    ]),
+                  ),
+                if (!isMobile)
+                  Divider(color: Colors.white.withOpacity(0.06), height: 1),
                 for (int i = 0; i < _filtered.length; i++) ...[
                   if (i != 0) Divider(color: Colors.white.withOpacity(0.04), height: 1),
-                  _PaymentRow(
-                    doc:      _filtered[i],
-                    userData: _userDataFor(_filtered[i].data()['userId']),
-                    onTap:    () => _showPaymentDetail(_filtered[i]),
-                    onVerify: () => _verifyPayment(_filtered[i].id, _filtered[i].data()['userId'] ?? ''),
-                    onReject: () => _rejectPayment(_filtered[i].id),
-                  ),
+                  isMobile
+                      ? _PaymentRowMobile(
+                          doc:      _filtered[i],
+                          userData: _userDataFor(_filtered[i].data()['userId']),
+                          onTap:    () => _showPaymentDetail(_filtered[i]),
+                          onVerify: () => _verifyPayment(_filtered[i].id, _filtered[i].data()['userId'] ?? ''),
+                          onReject: () => _rejectPayment(_filtered[i].id),
+                        )
+                      : _PaymentRow(
+                          doc:      _filtered[i],
+                          userData: _userDataFor(_filtered[i].data()['userId']),
+                          onTap:    () => _showPaymentDetail(_filtered[i]),
+                          onVerify: () => _verifyPayment(_filtered[i].id, _filtered[i].data()['userId'] ?? ''),
+                          onReject: () => _rejectPayment(_filtered[i].id),
+                        ),
                 ],
               ]),
             ),
@@ -904,7 +876,7 @@ class _PaymentsPageState extends State<PaymentsPage> {
 }
 
 // ─────────────────────────────────────────────
-// PAYMENT ROW WIDGET
+// PAYMENT ROW WIDGET — Desktop
 // ─────────────────────────────────────────────
 class _PaymentRow extends StatelessWidget {
   final QueryDocumentSnapshot<Map<String, dynamic>> doc;
@@ -936,7 +908,11 @@ class _PaymentRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(children: [
-                Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                Flexible(
+                  child: Text(name,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                ),
                 if (isDemo) ...[
                   const SizedBox(width: 6),
                   Container(
@@ -952,7 +928,9 @@ class _PaymentRow extends StatelessWidget {
                 ],
               ]),
               if (email.isNotEmpty)
-                Text(email, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                Text(email,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white38, fontSize: 11)),
             ],
           )),
           Expanded(flex: 2, child: Column(
@@ -968,7 +946,9 @@ class _PaymentRow extends StatelessWidget {
                 child: Text(method, style: const TextStyle(color: kBlue, fontSize: 10)),
               ),
               const SizedBox(height: 2),
-              Text(ref, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+              Text(ref,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white54, fontSize: 11)),
             ],
           )),
           Expanded(child: Text('₱$amount',
@@ -1001,6 +981,175 @@ class _PaymentRow extends StatelessWidget {
             ),
           ),
         ]),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// PAYMENT ROW WIDGET — Mobile (card layout)
+// FIX: replaces the horizontal flex row on mobile to avoid right overflow.
+// Each payment is displayed as a compact card with two lines of info
+// and action buttons tucked at the bottom-right.
+// ─────────────────────────────────────────────
+class _PaymentRowMobile extends StatelessWidget {
+  final QueryDocumentSnapshot<Map<String, dynamic>> doc;
+  final Map<String, dynamic>? userData;
+  final VoidCallback onTap, onVerify, onReject;
+
+  const _PaymentRowMobile({
+    required this.doc, required this.userData,
+    required this.onTap, required this.onVerify, required this.onReject,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final data   = doc.data();
+    final name   = userData?['name']  ?? data['userId'] ?? 'Unknown';
+    final email  = userData?['email'] ?? '';
+    final method = (data['method'] ?? '—').toString().toUpperCase();
+    final ref    = data['referenceNumber'] ?? '—';
+    final amount = data['amount'] ?? kPremiumPrice;
+    final status = _parseStatus(data['status']);
+    final isDemo = data['isDemo'] == true;
+
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Left: user info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Name + DEMO badge
+                  Row(children: [
+                    Flexible(
+                      child: Text(name,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                              color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                    ),
+                    if (isDemo) ...[
+                      const SizedBox(width: 5),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: kGold.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(color: kGold.withOpacity(0.45)),
+                        ),
+                        child: const Text('DEMO',
+                            style: TextStyle(
+                                color: kGold, fontSize: 9, fontWeight: FontWeight.bold)),
+                      ),
+                    ],
+                  ]),
+                  if (email.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(email,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                  ],
+                  const SizedBox(height: 6),
+                  // Method badge + ref
+                  Row(children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: kBlue.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: kBlue.withOpacity(0.4)),
+                      ),
+                      child: Text(method,
+                          style: const TextStyle(color: kBlue, fontSize: 10)),
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(ref,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                    ),
+                  ]),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            // Right: amount + status + actions
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text('₱$amount',
+                    style: const TextStyle(
+                        color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                const SizedBox(height: 4),
+                _StatusBadge(status),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (status == PaymentStatus.pending) ...[
+                      _MiniIconBtn(
+                          icon: Icons.check_rounded,
+                          color: kGreen,
+                          tooltip: 'Verify',
+                          onTap: onVerify),
+                      const SizedBox(width: 6),
+                      _MiniIconBtn(
+                          icon: Icons.close_rounded,
+                          color: kRed,
+                          tooltip: 'Reject',
+                          onTap: onReject),
+                    ] else
+                      _MiniIconBtn(
+                          icon: Icons.visibility_rounded,
+                          color: Colors.white38,
+                          tooltip: 'View',
+                          onTap: onTap),
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Small icon button used in the mobile payment row.
+class _MiniIconBtn extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String tooltip;
+  final VoidCallback onTap;
+
+  const _MiniIconBtn({
+    required this.icon,
+    required this.color,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withOpacity(0.35)),
+          ),
+          child: Icon(icon, color: color, size: 16),
+        ),
       ),
     );
   }
@@ -1891,22 +2040,33 @@ class _StatCard extends StatelessWidget {
       );
     }
 
+    // FIX: reduced padding (14→10), avatar radius (18→14), icon size (18→14),
+    // value font size (22→20), and spacing (10→6, 4→2) so the card content
+    // fits within the grid cell on mobile without bottom overflow.
     return _GlassPanel(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          CircleAvatar(radius: 18,
-              backgroundColor: iconColor.withOpacity(0.18),
-              child: Icon(icon, color: iconColor, size: 18)),
-          const SizedBox(height: 10),
-          Text(title,    style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          const SizedBox(height: 4),
-          Text(value,    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white)),
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: iconColor.withOpacity(0.18),
+            child: Icon(icon, color: iconColor, size: 14),
+          ),
+          const SizedBox(height: 6),
+          Text(title,
+              style: const TextStyle(color: Colors.white70, fontSize: 11),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1),
           const SizedBox(height: 2),
-          Text(subtitle, style: TextStyle(color: iconColor, fontSize: 11),
-              overflow: TextOverflow.ellipsis, maxLines: 1),
+          Text(value,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white)),
+          const SizedBox(height: 2),
+          Text(subtitle,
+              style: TextStyle(color: iconColor, fontSize: 10),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 1),
         ],
       ),
     );
