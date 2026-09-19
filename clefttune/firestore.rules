@@ -1,0 +1,18 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // The admin app currently uses a local PIN, not Firebase Auth.
+    match /badges/{badgeId} {
+      allow read, write: if true;
+    }
+
+    match /users/{userId} {
+      allow read: if true;
+    }
+
+    match /feedback/{feedbackId} {
+      allow read: if true;
+    }
+  }
+}

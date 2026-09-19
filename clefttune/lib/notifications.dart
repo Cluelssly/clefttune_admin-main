@@ -1,53 +1,32 @@
 // ═══════════════════════════════════════════════════════════════════
-// CLEFTTUNE ADMIN — notifications.dart  (FULLY FIXED)
+// CLEFTTUNE ADMIN — notifications.dart  (White Theme v1)
 //
-// FIXES APPLIED:
-//
-// BUG 1 — DocumentChangeType.added ignored after initial load
-//   After _initialNotifLoad = false, new docs written to Firestore
-//   were silently dropped. Fixed: added branch calls _add() so all
-//   new docs appear in real-time.
-//
-// BUG 2 — Empty-first-snapshot race condition
-//   Firestore sometimes delivers a cached empty snapshot first,
-//   setting _initialNotifLoad = false before real data arrives.
-//   Fixed by Bug 1 — those added events are now handled.
-//
-// BUG 3 — _NotificationPanel held stale provider reference
-//   Dialog lives in a separate route subtree. Passing the provider
-//   state object at open time meant the panel never saw new data.
-//   Fixed: pass the BuildContext and re-resolve provider in build().
-//
-// BUG 4 — findAncestorStateOfType doesn't register rebuild deps
-//   Unlike InheritedWidget it is a one-shot lookup. Bell and panel
-//   never rebuilt when provider called setState.
-//   Fixed: StreamController.broadcast() on the provider; both bell
-//   and panel use StreamBuilder to subscribe and auto-rebuild.
-//
-// NEW — seedExistingNotifications()
-//   One-time helper to populate adminNotifications from existing
-//   users and payments already in Firestore. Call it once from a
-//   debug button or initState, then remove the call (keep the fn).
+// Matches the clean white theme from main.dart.
+// Removed all premium/payment notification types.
+// Added gamification-aware notification types:
+//   • newUser, accountDeleted, profileUpdated
+//   • levelUp, streakAchieved, streakBroken
+//   • feedbackReceived
 // ═══════════════════════════════════════════════════════════════════
 
 import 'dart:async';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 // ─────────────────────────────────────────────
-// THEME
+// THEME — mirrors main.dart constants
 // ─────────────────────────────────────────────
-const _kBg           = Color(0xFF020C12);
-const _kPanel        = Color(0xFF0B2E39);
-const _kAccent       = Color(0xFF00E6C3);
-const _kPurple       = Color(0xFF9B6DFF);
-const _kGold         = Color(0xFFFFB800);
-const _kRed          = Color(0xFFFF4D6A);
-const _kGreen        = Color(0xFF00E096);
-const _kBlue         = Color(0xFF2D9CFF);
-const _kOrange       = Color(0xFFFF8C42);
-const _kPremiumPrice = 99;
+const _kBg      = Color(0xFFF5F4F0);
+const _kSurface = Color(0xFFFFFFFF);
+const _kSidebar = Color(0xFF1A1A2E);
+const _kAccent  = Color(0xFF2563EB);
+const _kIndigo  = Color(0xFF4F46E5);
+const _kEmerald = Color(0xFF059669);
+const _kAmber   = Color(0xFFD97706);
+const _kRose    = Color(0xFFE11D48);
+const _kSlate   = Color(0xFF64748B);
+const _kBorder  = Color(0xFFE2E8F0);
+const _kText    = Color(0xFF0F172A);
 
 // ─────────────────────────────────────────────
 // FIRESTORE COLLECTION
@@ -55,23 +34,21 @@ const _kPremiumPrice = 99;
 final _notifCol =
     FirebaseFirestore.instance.collection('adminNotifications');
 
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+int _getLevel(Map<String, dynamic> data) =>
+    (data['level'] ?? data['userLevel'] ?? 0) as int;
+
+int _getStreak(Map<String, dynamic> data) =>
+    (data['streak'] ?? data['currentStreak'] ?? 0) as int;
+
 // ═══════════════════════════════════════════════════════════════════
 // ONE-TIME SEED HELPER
-//
-// HOW TO USE:
-//   1. In your AdminShell or DashboardPage initState, add:
-//        await seedExistingNotifications();
-//   2. Hot-restart the app once.
-//   3. Check that notifications appear, then REMOVE the call.
-//      (Keep this function in the file — it is safe to leave.)
-//
-// It is idempotent: document IDs are deterministic so running it
-// twice will not create duplicates (set() overwrites the same doc).
 // ═══════════════════════════════════════════════════════════════════
 Future<void> seedExistingNotifications() async {
   debugPrint('[Seed] Starting seed of adminNotifications…');
   try {
-    // ── USERS ──────────────────────────────────────────────────────
     final users =
         await FirebaseFirestore.instance.collection('users').get();
 
@@ -79,6 +56,8 @@ Future<void> seedExistingNotifications() async {
       final data  = doc.data();
       final name  = (data['name']  ?? 'Unknown').toString();
       final email = (data['email'] ?? '—').toString();
+      final level  = _getLevel(data);
+      final streak = _getStreak(data);
 
       await _notifCol.doc('user_${doc.id}').set({
         'type':    'newUser',
@@ -89,86 +68,47 @@ Future<void> seedExistingNotifications() async {
         'savedAt': FieldValue.serverTimestamp(),
       });
 
-      final isPremium =
-          data['isPremium'] == true ||
-          (data['subscription'] ?? '').toString().toLowerCase() == 'premium' ||
-          (data['plan']         ?? '').toString().toLowerCase() == 'premium';
+      if (level >= 10) {
+        await _notifCol.doc('level_${doc.id}').set({
+          'type':    'levelUp',
+          'title':   'Level milestone reached 🏆',
+          'body':    '$name reached Level $level.',
+          'time':    data['updatedAt'] ?? FieldValue.serverTimestamp(),
+          'isRead':  false,
+          'savedAt': FieldValue.serverTimestamp(),
+        });
+      }
 
-      if (isPremium) {
-        await _notifCol.doc('newprem_${doc.id}').set({
-          'type':    'newPremiumUser',
-          'title':   'User upgraded to Premium ⭐',
-          'body':    '$name ($email) is now a Premium member.',
-          'time':    data['upgradedAt'] ??
-                     data['premiumSince'] ??
-                     FieldValue.serverTimestamp(),
+      if (streak >= 7) {
+        await _notifCol.doc('streak_${doc.id}').set({
+          'type':    'streakAchieved',
+          'title':   'Streak milestone 🔥',
+          'body':    '$name is on a $streak-day streak!',
+          'time':    data['updatedAt'] ?? FieldValue.serverTimestamp(),
           'isRead':  false,
           'savedAt': FieldValue.serverTimestamp(),
         });
       }
     }
-
     debugPrint('[Seed] Seeded ${users.docs.length} users.');
 
-    // ── PAYMENTS ───────────────────────────────────────────────────
-    final payments =
-        await FirebaseFirestore.instance.collection('payments').get();
+    final feedback =
+        await FirebaseFirestore.instance.collection('feedback').get();
 
-    for (final doc in payments.docs) {
+    for (final doc in feedback.docs) {
       final data   = doc.data();
-      if (data['isDemo'] == true) continue;
-
-      final status = (data['status'] ?? '').toString().toLowerCase();
-      final method = (data['method'] ?? 'gcash').toString().toUpperCase();
-      final ref    = (data['referenceNumber'] ?? '—').toString();
-      final amount = data['amount'] ?? _kPremiumPrice;
-      final name   =
-          (data['userName'] ?? data['name'] ?? 'A user').toString();
-
-      if (status == 'pending') {
-        await _notifCol.doc('pay_pending_${doc.id}').set({
-          'type':    'paymentPending',
-          'title':   'New payment submitted',
-          'body':    '$name submitted a ₱$amount $method payment. Ref: $ref — awaiting your review.',
-          'time':    data['createdAt'] ?? FieldValue.serverTimestamp(),
-          'isRead':  false,
-          'savedAt': FieldValue.serverTimestamp(),
-        });
-      } else if (status == 'verified') {
-        await _notifCol.doc('pay_verified_${doc.id}').set({
-          'type':    'paymentVerified',
-          'title':   'Payment verified',
-          'body':    '₱$amount $method payment from $name (Ref: $ref) was verified. User upgraded to Premium.',
-          'time':    data['verifiedAt'] ?? FieldValue.serverTimestamp(),
-          'isRead':  false,
-          'savedAt': FieldValue.serverTimestamp(),
-        });
-      } else if (status == 'rejected') {
-        final reason = (data['rejectionReason'] ?? '').toString();
-        await _notifCol.doc('pay_rejected_${doc.id}').set({
-          'type':    'paymentRejected',
-          'title':   'Payment rejected',
-          'body':    '₱$amount $method payment from $name (Ref: $ref) was rejected.'
-                     '${reason.isNotEmpty ? ' Reason: $reason' : ''}',
-          'time':    data['rejectedAt'] ?? FieldValue.serverTimestamp(),
-          'isRead':  false,
-          'savedAt': FieldValue.serverTimestamp(),
-        });
-      } else if (status == 'expired') {
-        await _notifCol.doc('pay_expired_${doc.id}').set({
-          'type':    'paymentExpired',
-          'title':   'Payment expired',
-          'body':    '₱$amount $method payment from $name (Ref: $ref) expired without being actioned.',
-          'time':    data['expiredAt'] ??
-                     data['updatedAt'] ??
-                     FieldValue.serverTimestamp(),
-          'isRead':  false,
-          'savedAt': FieldValue.serverTimestamp(),
-        });
-      }
+      final rating = ((data['rating'] ?? 0) as num).toInt();
+      final comment = (data['comment'] ?? data['feedback'] ?? '').toString();
+      await _notifCol.doc('fb_${doc.id}').set({
+        'type':    'feedbackReceived',
+        'title':   'New feedback received ⭐',
+        'body':    'A user left a $rating-star review.${comment.isNotEmpty ? ' "$comment"' : ''}',
+        'time':    data['createdAt'] ?? FieldValue.serverTimestamp(),
+        'isRead':  false,
+        'savedAt': FieldValue.serverTimestamp(),
+      });
     }
-
-    debugPrint('[Seed] Seeded ${payments.docs.length} payments. Done!');
+    debugPrint('[Seed] Seeded ${feedback.docs.length} feedback entries. Done!');
   } catch (e) {
     debugPrint('[Seed] ERROR: $e');
   }
@@ -179,23 +119,18 @@ Future<void> seedExistingNotifications() async {
 // ─────────────────────────────────────────────
 enum NotifType {
   newUser,
-  newPremiumUser,
   accountDeleted,
   profileUpdated,
-  paymentPending,
-  paymentVerified,
-  paymentRejected,
-  paymentExpired,
-  premiumCancelled,
-  premiumExpired,
+  levelUp,
+  streakAchieved,
+  streakBroken,
+  feedbackReceived,
 }
 
-NotifType _notifTypeFromString(String s) {
-  return NotifType.values.firstWhere(
-    (e) => e.name == s,
-    orElse: () => NotifType.newUser,
-  );
-}
+NotifType _typeFromString(String s) => NotifType.values.firstWhere(
+      (e) => e.name == s,
+      orElse: () => NotifType.newUser,
+    );
 
 class AdminNotification {
   final String    id;
@@ -218,14 +153,11 @@ class AdminNotification {
       DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data()!;
     DateTime time;
-    try {
-      time = (data['time'] as Timestamp).toDate();
-    } catch (_) {
-      time = DateTime.now();
-    }
+    try { time = (data['time'] as Timestamp).toDate(); }
+    catch (_) { time = DateTime.now(); }
     return AdminNotification(
       id:     doc.id,
-      type:   _notifTypeFromString(data['type'] ?? 'newUser'),
+      type:   _typeFromString(data['type'] ?? 'newUser'),
       title:  data['title']  ?? '',
       body:   data['body']   ?? '',
       time:   time,
@@ -245,66 +177,41 @@ class AdminNotification {
   Color get color {
     switch (type) {
       case NotifType.newUser:          return _kAccent;
-      case NotifType.newPremiumUser:   return _kGold;
-      case NotifType.accountDeleted:   return _kRed;
-      case NotifType.profileUpdated:   return _kBlue;
-      case NotifType.paymentPending:   return _kGold;
-      case NotifType.paymentVerified:  return _kGreen;
-      case NotifType.paymentRejected:  return _kRed;
-      case NotifType.paymentExpired:   return _kOrange;
-      case NotifType.premiumCancelled: return _kPurple;
-      case NotifType.premiumExpired:   return _kOrange;
+      case NotifType.accountDeleted:   return _kRose;
+      case NotifType.profileUpdated:   return _kIndigo;
+      case NotifType.levelUp:          return _kAmber;
+      case NotifType.streakAchieved:   return _kEmerald;
+      case NotifType.streakBroken:     return _kRose;
+      case NotifType.feedbackReceived: return _kIndigo;
     }
   }
 
   IconData get icon {
     switch (type) {
       case NotifType.newUser:          return Icons.person_add_rounded;
-      case NotifType.newPremiumUser:   return Icons.workspace_premium_rounded;
       case NotifType.accountDeleted:   return Icons.person_remove_rounded;
       case NotifType.profileUpdated:   return Icons.manage_accounts_rounded;
-      case NotifType.paymentPending:   return Icons.hourglass_empty_rounded;
-      case NotifType.paymentVerified:  return Icons.check_circle_rounded;
-      case NotifType.paymentRejected:  return Icons.cancel_rounded;
-      case NotifType.paymentExpired:   return Icons.timer_off_rounded;
-      case NotifType.premiumCancelled: return Icons.remove_circle_outline_rounded;
-      case NotifType.premiumExpired:   return Icons.event_busy_rounded;
-    }
-  }
-
-  String get category {
-    switch (type) {
-      case NotifType.newUser:
-      case NotifType.newPremiumUser:
-      case NotifType.accountDeleted:
-      case NotifType.profileUpdated:
-        return 'users';
-      case NotifType.paymentPending:
-      case NotifType.paymentVerified:
-      case NotifType.paymentRejected:
-      case NotifType.paymentExpired:
-        return 'payments';
-      case NotifType.premiumCancelled:
-      case NotifType.premiumExpired:
-        return 'premium';
+      case NotifType.levelUp:          return Icons.emoji_events_rounded;
+      case NotifType.streakAchieved:   return Icons.local_fire_department_rounded;
+      case NotifType.streakBroken:     return Icons.whatshot_rounded;
+      case NotifType.feedbackReceived: return Icons.star_rounded;
     }
   }
 
   String get timeLabel {
-    final now  = DateTime.now();
-    final diff = now.difference(time);
+    final diff = DateTime.now().difference(time);
     if (diff.inSeconds < 60) return 'Just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours   < 24) return '${diff.inHours}h ago';
-    if (diff.inDays    < 7)  return '${diff.inDays}d ago';
+    if (diff.inDays    <  7) return '${diff.inDays}d ago';
     return '${time.year}-${time.month.toString().padLeft(2, '0')}-'
            '${time.day.toString().padLeft(2, '0')}';
   }
 }
 
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
 // NOTIFICATION PROVIDER
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
 class NotificationProvider extends StatefulWidget {
   final Widget child;
   const NotificationProvider({super.key, required this.child});
@@ -318,418 +225,322 @@ class NotificationProvider extends StatefulWidget {
 }
 
 class _NotificationProviderState extends State<NotificationProvider> {
-  final List<AdminNotification>           _notifications      = [];
-  final Set<String>                       _seenUserIds        = {};
-  final Set<String>                       _seenPaymentIds     = {};
-  final Map<String, Map<String, dynamic>> _userSnapshots      = {};
-  final Set<String>                       _autoPaymentCreated = {};
+  final List<AdminNotification>           _notifications  = [];
+  final Set<String>                       _seenIds        = {};
+  final Map<String, Map<String, dynamic>> _userSnapshots  = {};
+  final Set<String>                       _seenFeedbackIds = {};
 
-  // FIX (Bug 3 + Bug 4): broadcast stream lets bell and panel
-  // subscribe and rebuild whenever data changes.
-  final _streamController = StreamController<int>.broadcast();
-  Stream<int> get stream  => _streamController.stream;
+  final _stream = StreamController<int>.broadcast();
+  Stream<int> get stream => _stream.stream;
 
-  bool _initialNotifLoad   = true;
-  bool _initialUserLoad    = true;
-  bool _initialPaymentLoad = true;
+  bool _initialUserLoad     = true;
+  bool _initialFeedbackLoad = true;
+  bool _initialNotifLoad    = true;
 
-  late final List<StreamSubscription<dynamic>> _subs;
+  StreamSubscription? _notifSub;
+  StreamSubscription? _userSub;
+  StreamSubscription? _feedbackSub;
 
-  List<AdminNotification> get notifications =>
-      List.unmodifiable(_notifications);
-
-  int get unreadCount =>
-      _notifications.where((n) => !n.isRead).length;
+  List<AdminNotification> get notifications => List.unmodifiable(_notifications);
+  int get unreadCount => _notifications.where((n) => !n.isRead).length;
 
   @override
   void initState() {
     super.initState();
-    _subs = [
-      _listenSavedNotifications(),
-      _listenUsers(),
-      _listenPayments(),
-    ];
+    _notifSub    = _listenNotifs();
+    _userSub     = _listenUsers();
+    _feedbackSub = _listenFeedback();
   }
 
   @override
   void dispose() {
-    for (final s in _subs) s.cancel();
-    _streamController.close();
+    _notifSub?.cancel();
+    _userSub?.cancel();
+    _feedbackSub?.cancel();
+    _stream.close();
     super.dispose();
   }
 
   void _notify() {
-    if (!_streamController.isClosed) {
-      _streamController.add(unreadCount);
-    }
+    if (!_stream.isClosed) _stream.add(unreadCount);
   }
 
-  // ── SAVED NOTIFICATIONS LISTENER ─────────────────────────────────
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>
-      _listenSavedNotifications() {
+  // ── RESUBSCRIBE HELPERS ───────────────────────────────────────────
+  void _resubNotifs() {
+    debugPrint('[Notif] adminNotifications error — resubscribing in 5s');
+    _notifSub?.cancel();
+    Future.delayed(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      _notifSub = _listenNotifs();
+    });
+  }
+
+  void _resubUsers() {
+    debugPrint('[Notif] users error — resubscribing in 5s');
+    _userSub?.cancel();
+    _initialUserLoad = true;
+    Future.delayed(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      _userSub = _listenUsers();
+    });
+  }
+
+  void _resubFeedback() {
+    debugPrint('[Notif] feedback error — resubscribing in 5s');
+    _feedbackSub?.cancel();
+    _initialFeedbackLoad = true;
+    Future.delayed(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      _feedbackSub = _listenFeedback();
+    });
+  }
+
+  // ── 1. SAVED NOTIFICATIONS LISTENER ──────────────────────────────
+  StreamSubscription _listenNotifs() {
     return _notifCol
         .orderBy('time', descending: true)
         .limit(100)
         .snapshots()
-        .listen((snap) {
-      if (_initialNotifLoad) {
-        // First snapshot: bulk-load everything in Firestore.
-        setState(() {
-          _notifications.clear();
-          for (final doc in snap.docs) {
-            try {
-              _notifications.add(AdminNotification.fromDoc(doc));
-            } catch (_) {}
-          }
-        });
-        _initialNotifLoad = false;
-        _notify();
-        return;
-      }
-
-      // Subsequent snapshots: process individual changes.
-      bool changed = false;
-
-      for (final change in snap.docChanges) {
-        if (change.type == DocumentChangeType.removed) {
-          _notifications.removeWhere((n) => n.id == change.doc.id);
-          changed = true;
-
-        } else if (change.type == DocumentChangeType.modified) {
-          final idx = _notifications
-              .indexWhere((n) => n.id == change.doc.id);
-          if (idx != -1 && change.doc.data() != null) {
-            _notifications[idx].isRead =
-                change.doc.data()!['isRead'] == true;
+        .listen(
+      (snap) {
+        bool changed = false;
+        for (final change in snap.docChanges) {
+          if (change.type == DocumentChangeType.removed) {
+            _notifications.removeWhere((n) => n.id == change.doc.id);
+            _seenIds.remove(change.doc.id);
             changed = true;
-          }
-
-        } else if (change.type == DocumentChangeType.added) {
-          // FIX (Bug 1 + Bug 2): Was completely missing before.
-          // Every doc written by seedExistingNotifications(),
-          // notification_helper.dart, or Cloud Functions arrives
-          // here after the first snapshot. Without this branch
-          // the list stayed permanently empty.
-          if (change.doc.data() != null) {
-            try {
-              final notif = AdminNotification.fromDoc(change.doc);
-              if (!_notifications.any((n) => n.id == notif.id)) {
-                _notifications.insert(0, notif);
-                if (_notifications.length > 100) {
-                  _notifications.removeLast();
-                }
+          } else if (change.type == DocumentChangeType.modified) {
+            final idx = _notifications.indexWhere((n) => n.id == change.doc.id);
+            if (idx != -1 && change.doc.data() != null) {
+              _notifications[idx].isRead =
+                  change.doc.data()!['isRead'] == true;
+              changed = true;
+            }
+          } else if (change.type == DocumentChangeType.added) {
+            if (change.doc.data() != null &&
+                !_seenIds.contains(change.doc.id)) {
+              try {
+                final n = AdminNotification.fromDoc(change.doc);
+                _notifications.add(n);
+                _seenIds.add(n.id);
                 changed = true;
-              }
-            } catch (_) {}
+              } catch (_) {}
+            }
           }
         }
-      }
-
-      if (changed) {
-        // Keep newest-first order after real-time inserts.
-        _notifications.sort((a, b) => b.time.compareTo(a.time));
-        setState(() {});
-        _notify();
-      }
-    });
+        if (_initialNotifLoad) _initialNotifLoad = false;
+        if (changed) {
+          _notifications.sort((a, b) => b.time.compareTo(a.time));
+          if (_notifications.length > 100) {
+            _notifications.removeRange(100, _notifications.length);
+          }
+          setState(() {});
+          _notify();
+        }
+      },
+      onError: (e, s) {
+        debugPrint('[Notif] adminNotifications error: $e');
+        _resubNotifs();
+      },
+      cancelOnError: true,
+    );
   }
 
-  // ── WRITE NEW NOTIFICATION TO FIRESTORE ──────────────────────────
-  Future<void> _persistNotif(AdminNotification notif) async {
-    try {
-      await _notifCol.doc(notif.id).set(notif.toMap());
-    } catch (e) {
-      debugPrint('Failed to persist notification: $e');
-    }
-  }
-
-  // ── AUTO-CREATE PAYMENT ──────────────────────────────────────────
-  Future<void> _ensurePaymentExists(
-      String userId, Map<String, dynamic> userData) async {
-    if (_autoPaymentCreated.contains(userId)) return;
-    _autoPaymentCreated.add(userId);
-
-    final existing = await FirebaseFirestore.instance
-        .collection('payments')
-        .where('userId', isEqualTo: userId)
-        .where('status',  isEqualTo: 'verified')
-        .limit(1)
-        .get();
-
-    if (existing.docs.isNotEmpty) return;
-
-    final methods   = ['gcash', 'maya'];
-    final method    = methods[DateTime.now().millisecondsSinceEpoch % 2];
-    final refNumber = 'AUTO-${DateTime.now().millisecondsSinceEpoch}';
-
-    await FirebaseFirestore.instance.collection('payments').add({
-      'userId':          userId,
-      'userName':        userData['name']  ?? '',
-      'userEmail':       userData['email'] ?? '',
-      'method':          method,
-      'referenceNumber': refNumber,
-      'amount':          _kPremiumPrice,
-      'status':          'verified',
-      'isDemo':          true,
-      'notes':           'Auto-generated when user upgraded to Premium',
-      'createdAt':       FieldValue.serverTimestamp(),
-      'verifiedAt':      FieldValue.serverTimestamp(),
-    });
-  }
-
-  // ── USERS LISTENER ───────────────────────────────────────────────
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>
-      _listenUsers() {
+  // ── 2. USERS LISTENER ─────────────────────────────────────────────
+  // Watches for:
+  //   • New registration        → newUser
+  //   • Account deleted         → accountDeleted
+  //   • Name/email changed      → profileUpdated
+  //   • Level milestone (10+)   → levelUp
+  //   • Streak milestone (7+)   → streakAchieved
+  //   • Streak reset to 0       → streakBroken
+  StreamSubscription _listenUsers() {
     return FirebaseFirestore.instance
         .collection('users')
         .snapshots()
-        .listen((snap) {
-      if (_initialUserLoad) {
-        for (final doc in snap.docs) {
-          _seenUserIds.add(doc.id);
-          final data = doc.data();
-          _userSnapshots[doc.id] = {
-            'name':         data['name'],
-            'email':        data['email'],
-            'isPremium':    data['isPremium'],
-            'cancelledAt':  data['cancelledAt'],
-            'premiumUntil': data['premiumUntil'],
-          };
-          if (data['isPremium'] == true) {
-            _autoPaymentCreated.add(doc.id);
-          }
-        }
-        _initialUserLoad = false;
-        return;
-      }
+        .listen(
+      (snap) {
+        for (final change in snap.docChanges) {
+          final data = change.doc.data();
+          final uid  = change.doc.id;
 
-      for (final change in snap.docChanges) {
-        final data = change.doc.data();
-
-        // Deleted
-        if (change.type == DocumentChangeType.removed) {
-          final prev  = _userSnapshots[change.doc.id];
-          final name  = prev?['name']  ?? 'A user';
-          final email = prev?['email'] ?? '—';
-          _seenUserIds.remove(change.doc.id);
-          _userSnapshots.remove(change.doc.id);
-          _autoPaymentCreated.remove(change.doc.id);
-          _add(AdminNotification(
-            id:    'deleted_${change.doc.id}_${DateTime.now().millisecondsSinceEpoch}',
-            type:  NotifType.accountDeleted,
-            title: 'Account deleted',
-            body:  '$name ($email) permanently deleted their account.',
-            time:  DateTime.now(),
-          ));
-          continue;
-        }
-
-        if (data == null) continue;
-
-        // New user
-        if (change.type == DocumentChangeType.added &&
-            !_seenUserIds.contains(change.doc.id)) {
-          _seenUserIds.add(change.doc.id);
-          _userSnapshots[change.doc.id] = {
-            'name':         data['name'],
-            'email':        data['email'],
-            'isPremium':    data['isPremium'],
-            'cancelledAt':  data['cancelledAt'],
-            'premiumUntil': data['premiumUntil'],
-          };
-          if (data['isPremium'] == true) {
-            _ensurePaymentExists(change.doc.id, data);
-          }
-          _add(AdminNotification(
-            id:    'user_${change.doc.id}',
-            type:  NotifType.newUser,
-            title: 'New user registered',
-            body:  '${data['name'] ?? 'Someone'} (${data['email'] ?? '—'}) just created an account.',
-            time:  _tsToDate(data['createdAt']),
-          ));
-        }
-
-        // Modified
-        if (change.type == DocumentChangeType.modified) {
-          final prev = _userSnapshots[change.doc.id] ?? {};
-
-          final wasPremium = prev['isPremium'] == true;
-          final isPremium  = data['isPremium'] == true;
-
-          if (!wasPremium && isPremium) {
-            final premId = 'newprem_${change.doc.id}';
-            if (!_seenPaymentIds.contains(premId)) {
-              _seenPaymentIds.add(premId);
-              _ensurePaymentExists(change.doc.id, data);
+          // ── DELETED ──────────────────────────────────────────────
+          if (change.type == DocumentChangeType.removed) {
+            final prev  = _userSnapshots[uid];
+            final name  = prev?['name']  ?? 'A user';
+            final email = prev?['email'] ?? '—';
+            _userSnapshots.remove(uid);
+            if (prev != null && !_initialUserLoad) {
               _add(AdminNotification(
-                id:    premId,
-                type:  NotifType.newPremiumUser,
-                title: 'User upgraded to Premium ⭐',
-                body:  '${data['name'] ?? 'A user'} (${data['email'] ?? '—'}) is now a Premium member. Revenue updated.',
-                time:  _tsToDate(data['upgradedAt'] ?? data['premiumSince']),
+                id:    'deleted_${uid}_${DateTime.now().millisecondsSinceEpoch}',
+                type:  NotifType.accountDeleted,
+                title: 'Account deleted',
+                body:  '$name ($email) permanently deleted their account.',
+                time:  DateTime.now(),
+              ));
+            }
+            continue;
+          }
+
+          if (data == null) continue;
+
+          // ── ADDED ─────────────────────────────────────────────────
+          if (change.type == DocumentChangeType.added) {
+            _userSnapshots[uid] = _snapshot(data);
+            if (!_initialUserLoad) {
+              _add(AdminNotification(
+                id:    'user_$uid',
+                type:  NotifType.newUser,
+                title: 'New user registered 👋',
+                body:  '${data['name'] ?? 'Someone'} (${data['email'] ?? '—'}) just created an account.',
+                time:  _ts(data['createdAt']),
               ));
             }
           }
 
-          final hadCancel = prev['cancelledAt'] != null;
-          final hasCancel = data['cancelledAt'] != null;
-          if (!hadCancel && hasCancel) {
-            final cancelId = 'cancel_${change.doc.id}';
-            if (!_seenPaymentIds.contains(cancelId)) {
-              _seenPaymentIds.add(cancelId);
+          // ── MODIFIED ──────────────────────────────────────────────
+          if (change.type == DocumentChangeType.modified) {
+            final prev = _userSnapshots[uid] ?? {};
+
+            final prevLevel  = prev['level']  as int? ?? 0;
+            final nowLevel   = _getLevel(data);
+            final prevStreak = prev['streak'] as int? ?? 0;
+            final nowStreak  = _getStreak(data);
+
+            // Level milestone crossed
+            final milestones = [5, 10, 20, 30, 50];
+            for (final m in milestones) {
+              if (prevLevel < m && nowLevel >= m) {
+                final id = 'level_${uid}_$m';
+                if (!_seenIds.contains(id)) {
+                  _add(AdminNotification(
+                    id:    id,
+                    type:  NotifType.levelUp,
+                    title: 'Level milestone reached 🏆',
+                    body:  '${data['name'] ?? 'A user'} (${data['email'] ?? '—'}) reached Level $nowLevel!',
+                    time:  _ts(data['updatedAt']),
+                  ));
+                }
+              }
+            }
+
+            // Streak milestone (every 7 days)
+            final streakMilestones = [7, 14, 21, 30, 60, 100];
+            for (final m in streakMilestones) {
+              if (prevStreak < m && nowStreak >= m) {
+                final id = 'streak_${uid}_$m';
+                if (!_seenIds.contains(id)) {
+                  _add(AdminNotification(
+                    id:    id,
+                    type:  NotifType.streakAchieved,
+                    title: 'Streak milestone 🔥',
+                    body:  '${data['name'] ?? 'A user'} (${data['email'] ?? '—'}) hit a $nowStreak-day streak!',
+                    time:  _ts(data['updatedAt']),
+                  ));
+                }
+              }
+            }
+
+            // Streak broken (went from >0 back to 0)
+            if (prevStreak > 2 && nowStreak == 0) {
+              final id = 'streakbroken_${uid}_${DateTime.now().millisecondsSinceEpoch}';
               _add(AdminNotification(
-                id:    cancelId,
-                type:  NotifType.premiumCancelled,
-                title: 'Premium cancelled',
-                body:  '${data['name'] ?? 'A user'} (${data['email'] ?? '—'}) cancelled their premium subscription.',
-                time:  _tsToDate(data['cancelledAt']),
+                id:    id,
+                type:  NotifType.streakBroken,
+                title: 'Streak ended',
+                body:  '${data['name'] ?? 'A user'}\'s $prevStreak-day streak was broken.',
+                time:  DateTime.now(),
               ));
             }
-          }
 
-          final hadPremiumUntil = prev['premiumUntil'] != null;
-          final premiumUntilNow = data['premiumUntil'];
-          final expiredId       = 'expired_${change.doc.id}';
-          if (wasPremium &&
-              !isPremium &&
-              !hasCancel &&
-              !_seenPaymentIds.contains(expiredId)) {
-            _seenPaymentIds.add(expiredId);
-            _add(AdminNotification(
-              id:    expiredId,
-              type:  NotifType.premiumExpired,
-              title: 'Premium expired',
-              body:  '${data['name'] ?? 'A user'}\'s (${data['email'] ?? '—'}) premium subscription has expired.',
-              time:  hadPremiumUntil
-                  ? _tsToDate(prev['premiumUntil'])
-                  : DateTime.now(),
-            ));
-          }
+            // Name or email changed
+            final nameChanged  = prev['name']  != data['name'];
+            final emailChanged = prev['email'] != data['email'];
+            if ((nameChanged || emailChanged) && !_initialUserLoad) {
+              final changed = <String>[
+                if (nameChanged)  'name',
+                if (emailChanged) 'email',
+              ];
+              _add(AdminNotification(
+                id:    'profile_${uid}_${DateTime.now().millisecondsSinceEpoch}',
+                type:  NotifType.profileUpdated,
+                title: 'Profile updated',
+                body:  '${data['name'] ?? 'A user'} updated their ${changed.join(' & ')}.',
+                time:  _ts(data['updatedAt']),
+              ));
+            }
 
-          final nameChanged  = prev['name']  != data['name'];
-          final emailChanged = prev['email'] != data['email'];
-          if (nameChanged || emailChanged) {
-            final changed = <String>[];
-            if (nameChanged)  changed.add('name');
-            if (emailChanged) changed.add('email');
-            _add(AdminNotification(
-              id:    'profile_${change.doc.id}_${DateTime.now().millisecondsSinceEpoch}',
-              type:  NotifType.profileUpdated,
-              title: 'Profile updated',
-              body:  '${data['name'] ?? 'A user'} updated their ${changed.join(' & ')}.',
-              time:  _tsToDate(data['updatedAt']),
-            ));
+            _userSnapshots[uid] = _snapshot(data);
           }
-
-          _userSnapshots[change.doc.id] = {
-            'name':         data['name'],
-            'email':        data['email'],
-            'isPremium':    data['isPremium'],
-            'cancelledAt':  data['cancelledAt'],
-            'premiumUntil': premiumUntilNow,
-          };
         }
-      }
-    });
+        if (_initialUserLoad) _initialUserLoad = false;
+      },
+      onError: (e, s) {
+        debugPrint('[Notif] users error: $e');
+        _resubUsers();
+      },
+      cancelOnError: true,
+    );
   }
 
-  // ── PAYMENTS LISTENER ────────────────────────────────────────────
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>
-      _listenPayments() {
+  // ── 3. FEEDBACK LISTENER ──────────────────────────────────────────
+  StreamSubscription _listenFeedback() {
     return FirebaseFirestore.instance
-        .collection('payments')
+        .collection('feedback')
         .snapshots()
-        .listen((snap) {
-      if (_initialPaymentLoad) {
-        for (final doc in snap.docs) {
-          _seenPaymentIds
-              .add('${doc.id}_${doc.data()['status']}');
-        }
-        _initialPaymentLoad = false;
-        return;
-      }
+        .listen(
+      (snap) {
+        for (final change in snap.docChanges) {
+          final data = change.doc.data();
+          if (data == null) continue;
 
-      for (final change in snap.docChanges) {
-        final data = change.doc.data();
-        if (data == null) continue;
+          final key   = change.doc.id;
+          final isNew = !_initialFeedbackLoad && !_seenFeedbackIds.contains(key);
+          _seenFeedbackIds.add(key);
 
-        final status = (data['status'] ?? '').toString().toLowerCase();
-        final key    = '${change.doc.id}_$status';
-        if (_seenPaymentIds.contains(key)) continue;
-        _seenPaymentIds.add(key);
+          if (!isNew) continue;
+          if (change.type != DocumentChangeType.added) continue;
 
-        final method = (data['method'] ?? '').toString().toUpperCase();
-        final ref    = data['referenceNumber'] ?? '—';
-        final amount = data['amount'] ?? _kPremiumPrice;
-        final name   = data['userName'] ?? data['name'] ?? 'A user';
-        if (data['isDemo'] == true) continue;
+          final rating  = ((data['rating'] ?? 0) as num).toInt();
+          final comment = (data['comment'] ?? data['feedback'] ?? '').toString();
+          final stars   = '⭐' * rating.clamp(0, 5);
 
-        if (change.type == DocumentChangeType.added &&
-            status == 'pending') {
           _add(AdminNotification(
-            id:    'pay_pending_${change.doc.id}',
-            type:  NotifType.paymentPending,
-            title: 'New payment submitted',
-            body:  '$name submitted a ₱$amount $method payment. Ref: $ref — awaiting your review.',
-            time:  _tsToDate(data['createdAt']),
+            id:    'fb_$key',
+            type:  NotifType.feedbackReceived,
+            title: 'New feedback received $stars',
+            body:  'A user left a $rating-star review.${comment.isNotEmpty ? ' "$comment"' : ''}',
+            time:  _ts(data['createdAt']),
           ));
         }
-
-        if (change.type == DocumentChangeType.modified &&
-            status == 'verified') {
-          _add(AdminNotification(
-            id:    'pay_verified_${change.doc.id}',
-            type:  NotifType.paymentVerified,
-            title: 'Payment verified',
-            body:  '₱$amount $method payment from $name (Ref: $ref) was verified. User upgraded to Premium.',
-            time:  _tsToDate(data['verifiedAt']),
-          ));
-        }
-
-        if (change.type == DocumentChangeType.modified &&
-            status == 'rejected') {
-          final reason = data['rejectionReason'] ?? '';
-          _add(AdminNotification(
-            id:    'pay_rejected_${change.doc.id}',
-            type:  NotifType.paymentRejected,
-            title: 'Payment rejected',
-            body:  '₱$amount $method payment from $name (Ref: $ref) was rejected.'
-                   '${reason.isNotEmpty ? ' Reason: $reason' : ''}',
-            time:  _tsToDate(data['rejectedAt']),
-          ));
-        }
-
-        if ((change.type == DocumentChangeType.added ||
-             change.type == DocumentChangeType.modified) &&
-            status == 'expired') {
-          _add(AdminNotification(
-            id:    'pay_expired_${change.doc.id}',
-            type:  NotifType.paymentExpired,
-            title: 'Payment expired',
-            body:  '₱$amount $method payment from $name (Ref: $ref) expired without being actioned.',
-            time:  _tsToDate(data['expiredAt'] ?? data['updatedAt']),
-          ));
-        }
-      }
-    });
+        if (_initialFeedbackLoad) _initialFeedbackLoad = false;
+      },
+      onError: (e, s) {
+        debugPrint('[Notif] feedback error: $e');
+        _resubFeedback();
+      },
+      cancelOnError: true,
+    );
   }
 
-  // ── HELPERS ──────────────────────────────────────────────────────
-
+  // ── WRITE TO BOTH IN-MEMORY LIST AND FIRESTORE ────────────────────
   void _add(AdminNotification notif) {
-    if (_notifications.any((n) => n.id == notif.id)) return;
+    if (_seenIds.contains(notif.id)) return;
+    _seenIds.add(notif.id);
     setState(() {
       _notifications.insert(0, notif);
       if (_notifications.length > 100) _notifications.removeLast();
     });
     _notify();
-    _persistNotif(notif);
+    _notifCol.doc(notif.id).set(notif.toMap()).catchError((e) {
+      debugPrint('[Notif] persist error: $e');
+    });
   }
 
+  // ── PUBLIC ACTIONS ────────────────────────────────────────────────
   void markRead(String id) {
     final idx = _notifications.indexWhere((n) => n.id == id);
-    if (idx == -1) return;
-    if (_notifications[idx].isRead) return;
+    if (idx == -1 || _notifications[idx].isRead) return;
     setState(() => _notifications[idx].isRead = true);
     _notify();
     _notifCol.doc(id).update({'isRead': true}).catchError((_) {});
@@ -738,9 +549,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
   void markAllRead() {
     final unread = _notifications.where((n) => !n.isRead).toList();
     if (unread.isEmpty) return;
-    setState(() {
-      for (final n in _notifications) n.isRead = true;
-    });
+    setState(() { for (final n in _notifications) n.isRead = true; });
     _notify();
     final batch = FirebaseFirestore.instance.batch();
     for (final n in unread) {
@@ -751,16 +560,22 @@ class _NotificationProviderState extends State<NotificationProvider> {
 
   void clearAll() {
     final ids = _notifications.map((n) => n.id).toList();
-    setState(() => _notifications.clear());
+    setState(() { _notifications.clear(); _seenIds.clear(); });
     _notify();
     final batch = FirebaseFirestore.instance.batch();
-    for (final id in ids) {
-      batch.delete(_notifCol.doc(id));
-    }
+    for (final id in ids) batch.delete(_notifCol.doc(id));
     batch.commit().catchError((_) {});
   }
 
-  DateTime _tsToDate(dynamic ts) {
+  // ── HELPERS ───────────────────────────────────────────────────────
+  Map<String, dynamic> _snapshot(Map<String, dynamic> d) => {
+    'name':   d['name'],
+    'email':  d['email'],
+    'level':  _getLevel(d),
+    'streak': _getStreak(d),
+  };
+
+  DateTime _ts(dynamic ts) {
     if (ts == null) return DateTime.now();
     try { return (ts as Timestamp).toDate(); }
     catch (_) { return DateTime.now(); }
@@ -770,10 +585,9 @@ class _NotificationProviderState extends State<NotificationProvider> {
   Widget build(BuildContext context) => widget.child;
 }
 
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
 // NOTIFICATION BELL
-// FIX (Bug 4): StreamBuilder auto-rebuilds badge on every change.
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
 class NotificationBell extends StatelessWidget {
   const NotificationBell({super.key});
 
@@ -784,9 +598,8 @@ class NotificationBell extends StatelessWidget {
     return StreamBuilder<int>(
       stream:      provider?.stream,
       initialData: provider?.unreadCount ?? 0,
-      builder: (context, snapshot) {
-        final count = snapshot.data ?? 0;
-
+      builder: (context, snap) {
+        final count = snap.data ?? 0;
         return GestureDetector(
           onTap: () => _openPanel(context, provider),
           child: Stack(
@@ -795,16 +608,22 @@ class NotificationBell extends StatelessWidget {
               Container(
                 width: 40, height: 40,
                 decoration: BoxDecoration(
-                  color:        _kPanel,
+                  color:        _kSurface,
                   borderRadius: BorderRadius.circular(12),
-                  border:       Border.all(
-                      color: _kAccent.withOpacity(0.25)),
+                  border:       Border.all(color: _kBorder),
+                  boxShadow: [
+                    BoxShadow(
+                      color:      Colors.black.withOpacity(0.06),
+                      blurRadius: 6,
+                      offset:     const Offset(0, 2),
+                    ),
+                  ],
                 ),
                 child: Icon(
                   count > 0
                       ? Icons.notifications_rounded
                       : Icons.notifications_none_rounded,
-                  color: count > 0 ? _kAccent : Colors.white38,
+                  color: count > 0 ? _kAccent : _kSlate,
                   size:  20,
                 ),
               ),
@@ -812,20 +631,16 @@ class NotificationBell extends StatelessWidget {
                 Positioned(
                   top: -4, right: -4,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 5, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                     decoration: BoxDecoration(
-                      color:        _kRed,
+                      color:        _kRose,
                       borderRadius: BorderRadius.circular(10),
-                      border:
-                          Border.all(color: _kBg, width: 1.5),
+                      border:       Border.all(color: _kBg, width: 1.5),
                     ),
                     child: Text(
                       count > 99 ? '99+' : '$count',
                       style: const TextStyle(
-                          color:      Colors.white,
-                          fontSize:   9,
-                          fontWeight: FontWeight.bold),
+                          color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
                     ),
                   ),
                 ),
@@ -836,186 +651,51 @@ class NotificationBell extends StatelessWidget {
     );
   }
 
-  void _openPanel(
-      BuildContext context, _NotificationProviderState? provider) {
+  void _openPanel(BuildContext context, _NotificationProviderState? provider) {
     showGeneralDialog(
-      context: context,
+      context:            context,
       barrierDismissible: true,
       barrierLabel:       'notifications',
-      barrierColor:       Colors.black54,
-      transitionDuration: const Duration(milliseconds: 220),
+      barrierColor:       Colors.black.withOpacity(0.3),
+      transitionDuration: const Duration(milliseconds: 240),
       transitionBuilder: (ctx, anim, _, child) {
-        final curved = CurvedAnimation(
-            parent: anim, curve: Curves.easeOutCubic);
         return SlideTransition(
           position: Tween<Offset>(
             begin: const Offset(1, 0), end: Offset.zero,
-          ).animate(curved),
+          ).animate(CurvedAnimation(parent: anim, curve: Curves.easeOutCubic)),
           child: child,
         );
       },
-      // FIX (Bug 3): pass tree context so panel re-resolves provider
-      // fresh on every build() instead of holding a stale reference.
       pageBuilder: (ctx, _, __) =>
           _NotificationPanel(providerContext: context),
     );
   }
 }
 
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
 // NOTIFICATION PANEL
-// FIX (Bug 3 + Bug 4): resolves provider in build() and uses
-// StreamBuilder to stay in sync with live data.
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
 class _NotificationPanel extends StatefulWidget {
   final BuildContext providerContext;
   const _NotificationPanel({required this.providerContext});
 
   @override
-  State<_NotificationPanel> createState() =>
-      _NotificationPanelState();
+  State<_NotificationPanel> createState() => _NotificationPanelState();
 }
 
 class _NotificationPanelState extends State<_NotificationPanel> {
-  // Only All | Unread filters remain (category chips removed)
   String _filter = 'all';
 
-  _NotificationProviderState? get _provider =>
-      NotificationProvider.of(widget.providerContext);
-
-  List<AdminNotification> _applyFilter(
-      List<AdminNotification> all) {
-    switch (_filter) {
-      case 'unread':
-        return all.where((n) => !n.isRead).toList();
-      default:
-        return all;
-    }
+  _NotificationProviderState? get _provider {
+    try {
+      if (!widget.providerContext.mounted) return null;
+      return NotificationProvider.of(widget.providerContext);
+    } catch (_) { return null; }
   }
 
-  // ── WARNING DIALOG FOR DELETED ACCOUNTS ─────────────────────────
-  void _showDeletedWarning(
-      BuildContext context, AdminNotification notif) {
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: Container(
-          padding: const EdgeInsets.all(24),
-          decoration: BoxDecoration(
-            color:        const Color(0xFF0D1F2D),
-            borderRadius: BorderRadius.circular(20),
-            border:       Border.all(
-                color: _kRed.withOpacity(0.5), width: 1.5),
-            boxShadow: [
-              BoxShadow(
-                color:        _kRed.withOpacity(0.15),
-                blurRadius:   30,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 64, height: 64,
-                decoration: BoxDecoration(
-                  color:  _kRed.withOpacity(0.12),
-                  shape:  BoxShape.circle,
-                  border: Border.all(
-                      color: _kRed.withOpacity(0.4), width: 1.5),
-                ),
-                child: const Icon(
-                  Icons.warning_amber_rounded,
-                  color: _kRed,
-                  size:  32,
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Account Deleted',
-                style: TextStyle(
-                  color:      Colors.white,
-                  fontSize:   20,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                notif.body,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color:    Colors.white60,
-                  fontSize: 13,
-                  height:   1.5,
-                ),
-              ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color:        _kRed.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  border:       Border.all(
-                      color: _kRed.withOpacity(0.2)),
-                ),
-                child: const Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(Icons.info_outline_rounded,
-                        color: _kRed, size: 16),
-                    SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'This action is permanent and cannot be undone. '
-                        'All data associated with this account has been '
-                        'removed from Firestore.',
-                        style: TextStyle(
-                          color:    Colors.white54,
-                          fontSize: 12,
-                          height:   1.5,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 20),
-              Text(
-                'Occurred: ${notif.timeLabel}',
-                style: TextStyle(
-                    color:    _kRed.withOpacity(0.6),
-                    fontSize: 11),
-              ),
-              const SizedBox(height: 20),
-              SizedBox(
-                width: double.infinity,
-                child: TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: TextButton.styleFrom(
-                    backgroundColor: _kRed.withOpacity(0.12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: _kRed.withOpacity(0.3)),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                  ),
-                  child: const Text(
-                    'Understood',
-                    style: TextStyle(
-                      color:      _kRed,
-                      fontWeight: FontWeight.bold,
-                      fontSize:   14,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  List<AdminNotification> _apply(List<AdminNotification> all) {
+    if (_filter == 'unread') return all.where((n) => !n.isRead).toList();
+    return all;
   }
 
   @override
@@ -1027,7 +707,7 @@ class _NotificationPanelState extends State<_NotificationPanel> {
       initialData: provider?.unreadCount ?? 0,
       builder: (context, _) {
         final all    = provider?.notifications ?? [];
-        final items  = _applyFilter(all.toList());
+        final items  = _apply(all.toList());
         final unread = provider?.unreadCount ?? 0;
         final w      = MediaQuery.of(context).size.width;
         final panelW = w < 500 ? w : 400.0;
@@ -1039,45 +719,48 @@ class _NotificationPanelState extends State<_NotificationPanel> {
             child: Container(
               width:  panelW,
               height: double.infinity,
-              decoration: BoxDecoration(
-                color:  _kBg,
-                border: Border(left: BorderSide(
-                    color: _kAccent.withOpacity(0.2))),
+              decoration: const BoxDecoration(
+                color: _kSurface,
+                border: Border(left: BorderSide(color: _kBorder)),
+                boxShadow: [
+                  BoxShadow(
+                    color:      Color(0x14000000),
+                    blurRadius: 24,
+                    offset:     Offset(-4, 0),
+                  ),
+                ],
               ),
               child: SafeArea(
                 child: Column(children: [
 
-                  // ── HEADER ──────────────────────────────────
+                  // ── HEADER ────────────────────────────────────────
                   Container(
-                    padding: const EdgeInsets.fromLTRB(
-                        20, 20, 12, 16),
-                    decoration: BoxDecoration(
-                      color:  _kPanel.withOpacity(0.6),
-                      border: Border(bottom: BorderSide(
-                          color: _kAccent.withOpacity(0.15))),
+                    padding: const EdgeInsets.fromLTRB(20, 20, 12, 16),
+                    decoration: const BoxDecoration(
+                      color: _kSurface,
+                      border: Border(bottom: BorderSide(color: _kBorder)),
                     ),
                     child: Row(children: [
-                      const Icon(Icons.notifications_rounded,
-                          color: _kAccent, size: 22),
-                      const SizedBox(width: 10),
+                      Container(
+                        width: 36, height: 36,
+                        decoration: BoxDecoration(
+                          color:        _kAccent.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.notifications_rounded, color: _kAccent, size: 18),
+                      ),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Column(
-                          crossAxisAlignment:
-                              CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             const Text('Notifications',
                                 style: TextStyle(
-                                    color:      Colors.white,
-                                    fontSize:   18,
-                                    fontWeight: FontWeight.bold)),
+                                    color: _kText, fontSize: 16, fontWeight: FontWeight.bold)),
                             Text(
-                              unread > 0
-                                  ? '$unread unread'
-                                  : 'All caught up',
+                              unread > 0 ? '$unread unread' : 'All caught up ✓',
                               style: TextStyle(
-                                  color: unread > 0
-                                      ? _kAccent
-                                      : Colors.white38,
+                                  color:    unread > 0 ? _kAccent : _kSlate,
                                   fontSize: 12),
                             ),
                           ],
@@ -1085,110 +768,88 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                       ),
                       if (unread > 0)
                         TextButton(
-                          onPressed: () =>
-                              provider?.markAllRead(),
-                          child: const Text('Mark all read',
-                              style: TextStyle(
-                                  color:    _kAccent,
-                                  fontSize: 12)),
+                          onPressed: () => provider?.markAllRead(),
+                          style: TextButton.styleFrom(
+                            foregroundColor: _kAccent,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          child: const Text('Mark all read', style: TextStyle(fontSize: 12)),
                         ),
                       if (all.isNotEmpty)
                         IconButton(
-                          icon: const Icon(
-                              Icons.delete_sweep_rounded,
-                              color: Colors.white38,
-                              size:  20),
+                          icon: const Icon(Icons.delete_sweep_rounded, color: _kSlate, size: 20),
                           tooltip:   'Clear all',
                           onPressed: () => provider?.clearAll(),
                         ),
                       IconButton(
-                        icon: const Icon(
-                            Icons.close_rounded,
-                            color: Colors.white38),
+                        icon: const Icon(Icons.close_rounded, color: _kSlate),
                         onPressed: () => Navigator.pop(context),
                       ),
                     ]),
                   ),
 
-                  // ── FILTER CHIPS (All | Unread only) ────────
+                  // ── FILTER CHIPS ──────────────────────────────────
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 10),
-                    decoration: BoxDecoration(
-                      color:  _kPanel.withOpacity(0.3),
-                      border: Border(bottom: BorderSide(
-                          color:
-                              Colors.white.withOpacity(0.06))),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    decoration: const BoxDecoration(
+                      color:  _kBg,
+                      border: Border(bottom: BorderSide(color: _kBorder)),
                     ),
                     child: Row(children: [
-                      _Chip(
-                          label: 'All',
-                          selected: _filter == 'all',
-                          onTap: () => setState(
-                              () => _filter = 'all')),
+                      _PanelChip(
+                        label:    'All',
+                        selected: _filter == 'all',
+                        onTap:    () => setState(() => _filter = 'all'),
+                      ),
                       const SizedBox(width: 8),
-                      _Chip(
-                          label: 'Unread',
-                          selected: _filter == 'unread',
-                          color: _kRed,
-                          onTap: () => setState(
-                              () => _filter = 'unread')),
+                      _PanelChip(
+                        label:    'Unread',
+                        selected: _filter == 'unread',
+                        color:    _kRose,
+                        onTap:    () => setState(() => _filter = 'unread'),
+                      ),
                     ]),
                   ),
 
-                  // ── LIST ────────────────────────────────────
+                  // ── LIST ──────────────────────────────────────────
                   Expanded(
                     child: items.isEmpty
                         ? _EmptyState(filter: _filter)
                         : ListView.separated(
-                            padding:
-                                const EdgeInsets.symmetric(
-                                    vertical: 8),
+                            padding: const EdgeInsets.symmetric(vertical: 8),
                             itemCount: items.length,
                             separatorBuilder: (_, __) =>
-                                Divider(
-                                    color: Colors.white
-                                        .withOpacity(0.05),
-                                    height: 1),
+                                const Divider(color: _kBorder, height: 1),
                             itemBuilder: (_, i) => _NotifTile(
                               notif: items[i],
                               onTap: () {
                                 provider?.markRead(items[i].id);
-                                if (items[i].type ==
-                                    NotifType.accountDeleted) {
-                                  _showDeletedWarning(
-                                      context, items[i]);
+                                if (items[i].type == NotifType.accountDeleted) {
+                                  _showDeletedWarning(context, items[i]);
                                 }
                               },
                             ),
                           ),
                   ),
 
-                  // ── FOOTER ──────────────────────────────────
+                  // ── FOOTER ────────────────────────────────────────
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                        vertical: 10),
-                    decoration: BoxDecoration(
-                      border: Border(top: BorderSide(
-                          color: _kAccent.withOpacity(0.1))),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: const BoxDecoration(
+                      border: Border(top: BorderSide(color: _kBorder)),
                     ),
                     child: Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.center,
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        const Icon(Icons.cloud_done_rounded,
-                            color: Colors.white24, size: 13),
+                        const Icon(Icons.cloud_done_rounded, color: _kSlate, size: 13),
                         const SizedBox(width: 6),
                         Text(
-                          'Saved to Firestore · ${all.length} total',
-                          style: const TextStyle(
-                              color:    Colors.white24,
-                              fontSize: 11),
+                          'Live from Firestore · ${all.length} total',
+                          style: const TextStyle(color: _kSlate, fontSize: 11),
                         ),
                       ],
                     ),
                   ),
-
                 ]),
               ),
             ),
@@ -1197,11 +858,41 @@ class _NotificationPanelState extends State<_NotificationPanel> {
       },
     );
   }
+
+  void _showDeletedWarning(BuildContext context, AdminNotification notif) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _kSurface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: _kRose.withOpacity(0.4))),
+        title: const Row(children: [
+          Icon(Icons.warning_amber_rounded, color: _kRose, size: 22),
+          SizedBox(width: 8),
+          Text('Account Deleted',
+              style: TextStyle(color: _kText, fontSize: 16, fontWeight: FontWeight.bold)),
+        ]),
+        content: Text(notif.body,
+            style: const TextStyle(color: _kSlate, fontSize: 13, height: 1.5)),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _kRose, foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Understood'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
 // NOTIFICATION TILE
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
 class _NotifTile extends StatelessWidget {
   final AdminNotification notif;
   final VoidCallback      onTap;
@@ -1213,24 +904,20 @@ class _NotifTile extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        color:   notif.isRead
-            ? Colors.transparent
-            : notif.color.withOpacity(0.06),
-        padding: const EdgeInsets.symmetric(
-            horizontal: 16, vertical: 14),
+        color:   notif.isRead ? Colors.transparent : notif.color.withOpacity(0.05),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Icon badge
             Container(
               width: 40, height: 40,
               decoration: BoxDecoration(
-                color:        notif.color.withOpacity(0.15),
+                color:        notif.color.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                    color: notif.color.withOpacity(0.3)),
+                border:       Border.all(color: notif.color.withOpacity(0.25)),
               ),
-              child: Icon(notif.icon,
-                  color: notif.color, size: 18),
+              child: Icon(notif.icon, color: notif.color, size: 18),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1239,60 +926,34 @@ class _NotifTile extends StatelessWidget {
                 children: [
                   Row(children: [
                     Expanded(
-                      child: Text(notif.title,
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontWeight: notif.isRead
-                                ? FontWeight.normal
-                                : FontWeight.bold,
-                            fontSize: 13,
-                          )),
+                      child: Text(
+                        notif.title,
+                        style: TextStyle(
+                          color:      _kText,
+                          fontWeight: notif.isRead ? FontWeight.normal : FontWeight.bold,
+                          fontSize:   13,
+                        ),
+                      ),
                     ),
-                    if (notif.type == NotifType.accountDeleted)
-                      Container(
-                        margin: const EdgeInsets.only(left: 6),
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color:        _kRed.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(6),
-                          border:       Border.all(
-                              color: _kRed.withOpacity(0.4)),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.warning_amber_rounded,
-                                color: _kRed, size: 11),
-                            SizedBox(width: 3),
-                            Text('WARNING',
-                                style: TextStyle(
-                                    color:         _kRed,
-                                    fontSize:      9,
-                                    fontWeight:    FontWeight.bold,
-                                    letterSpacing: 0.5)),
-                          ],
-                        ),
-                      )
-                    else if (!notif.isRead)
+                    if (!notif.isRead)
                       Container(
                         width: 7, height: 7,
                         decoration: BoxDecoration(
-                            color: notif.color,
-                            shape: BoxShape.circle),
+                            color: notif.color, shape: BoxShape.circle),
                       ),
                   ]),
-                  const SizedBox(height: 4),
-                  Text(notif.body,
-                      style: const TextStyle(
-                          color:    Colors.white60,
-                          fontSize: 12,
-                          height:   1.4)),
-                  const SizedBox(height: 6),
-                  Text(notif.timeLabel,
-                      style: TextStyle(
-                          color: notif.color.withOpacity(0.7),
-                          fontSize: 11)),
+                  const SizedBox(height: 3),
+                  Text(
+                    notif.body,
+                    style: const TextStyle(
+                        color: _kSlate, fontSize: 12, height: 1.4),
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    notif.timeLabel,
+                    style: TextStyle(
+                        color: notif.color.withOpacity(0.8), fontSize: 11),
+                  ),
                 ],
               ),
             ),
@@ -1303,9 +964,9 @@ class _NotifTile extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// EMPTY STATE
-// ─────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════
+// SMALL WIDGETS
+// ═══════════════════════════════════════════════════════════════════
 class _EmptyState extends StatelessWidget {
   final String filter;
   const _EmptyState({required this.filter});
@@ -1314,21 +975,25 @@ class _EmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Icon(Icons.notifications_off_rounded,
-            color: Colors.white12, size: 56),
+        Container(
+          width: 64, height: 64,
+          decoration: BoxDecoration(
+            color:        _kBg,
+            shape:        BoxShape.circle,
+            border:       Border.all(color: _kBorder),
+          ),
+          child: const Icon(Icons.notifications_off_rounded, color: _kSlate, size: 28),
+        ),
         const SizedBox(height: 16),
         Text(
-          filter == 'all'
-              ? 'No notifications yet'
-              : 'No $filter notifications',
+          filter == 'all' ? 'No notifications yet' : 'No unread notifications',
           style: const TextStyle(
-              color: Colors.white38, fontSize: 15),
+              color: _kText, fontSize: 15, fontWeight: FontWeight.w600),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         const Text(
-          'Events from Firestore will appear here\n'
-          'in real-time as they happen.',
-          style:     TextStyle(color: Colors.white24, fontSize: 12),
+          'Events from Firestore will appear here\nin real-time as they happen.',
+          style: TextStyle(color: _kSlate, fontSize: 12),
           textAlign: TextAlign.center,
         ),
       ]),
@@ -1336,16 +1001,13 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────
-// CHIP WIDGET
-// ─────────────────────────────────────────────
-class _Chip extends StatelessWidget {
+class _PanelChip extends StatelessWidget {
   final String       label;
   final bool         selected;
   final VoidCallback onTap;
   final Color        color;
 
-  const _Chip({
+  const _PanelChip({
     required this.label,
     required this.selected,
     required this.onTap,
@@ -1358,23 +1020,20 @@ class _Chip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        padding:  const EdgeInsets.symmetric(
-            horizontal: 12, vertical: 6),
+        padding:  const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: selected
-              ? color.withOpacity(0.15)
-              : Colors.transparent,
+          color:        selected ? color.withOpacity(0.1) : Colors.transparent,
           borderRadius: BorderRadius.circular(20),
-          border:
-              Border.all(color: selected ? color : Colors.white24),
+          border:       Border.all(color: selected ? color : _kBorder),
         ),
-        child: Text(label,
-            style: TextStyle(
-              color: selected ? color : Colors.white54,
-              fontWeight:
-                  selected ? FontWeight.bold : FontWeight.normal,
-              fontSize: 12,
-            )),
+        child: Text(
+          label,
+          style: TextStyle(
+            color:      selected ? color : _kSlate,
+            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+            fontSize:   12,
+          ),
+        ),
       ),
     );
   }
