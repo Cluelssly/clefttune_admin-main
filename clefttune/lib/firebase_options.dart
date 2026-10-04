@@ -54,7 +54,7 @@ class DefaultFirebaseOptions {
   /// ANDROID FIREBASE CONFIG
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyD9lgM6F2qU5oMBytqy_H-I0tXn1nIE8SY',
-    appId: '1:756813986418:android:edc4e7239da11cd07620eb',
+    appId: '1:756813986418:android:c008f4b3a17fd5e67620eb',
     messagingSenderId: '756813986418',
     projectId: 'appcleft2026-55337',
     storageBucket: 'appcleft2026-55337.firebasestorage.app',

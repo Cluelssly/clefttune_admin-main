@@ -1,22 +1,28 @@
 {
+	"functions": {
+		"source": "functions",
+		"codebase": "default",
+		"predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"]
+	},
 	"firestore": {
-		"rules": "firestore.rules"
+		"rules": "firestore.rules",
+		"indexes": "firestore.indexes.json"
 	},
 	"flutter": {
 		"platforms": {
 			"android": {
 				"default": {
-					"projectId": "clefttune",
-					"appId": "1:1024421100650:android:10462461ccf196b7cc9e13",
+					"projectId": "appcleft2026-55337",
+					"appId": "1:756813986418:android:c008f4b3a17fd5e67620eb",
 					"fileOutput": "android/app/google-services.json"
 				}
 			},
 			"dart": {
 				"lib/firebase_options.dart": {
-					"projectId": "clefttune",
+					"projectId": "appcleft2026-55337",
 					"configurations": {
-						"android": "1:1024421100650:android:10462461ccf196b7cc9e13",
-						"web": "1:1024421100650:web:ff4ade250354650ecc9e13"
+						"android": "1:756813986418:android:c008f4b3a17fd5e67620eb",
+						"web": "1:756813986418:web:68a043e4f9a286037620eb"
 					}
 				}
 			}

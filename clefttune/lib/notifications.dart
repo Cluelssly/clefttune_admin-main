@@ -3,10 +3,7 @@
 //
 // Matches the clean white theme from main.dart.
 // Removed all premium/payment notification types.
-// Added gamification-aware notification types:
-//   • newUser, accountDeleted, profileUpdated
-//   • levelUp, streakAchieved, streakBroken
-//   • feedbackReceived
+// The admin notification feed is limited to new users and earned badges.
 // ═══════════════════════════════════════════════════════════════════
 
 import 'dart:async';
@@ -18,7 +15,6 @@ import 'package:flutter/material.dart';
 // ─────────────────────────────────────────────
 const _kBg      = Color(0xFFF5F4F0);
 const _kSurface = Color(0xFFFFFFFF);
-const _kSidebar = Color(0xFF1A1A2E);
 const _kAccent  = Color(0xFF2563EB);
 const _kIndigo  = Color(0xFF4F46E5);
 const _kEmerald = Color(0xFF059669);
@@ -32,93 +28,20 @@ const _kText    = Color(0xFF0F172A);
 // FIRESTORE COLLECTION
 // ─────────────────────────────────────────────
 final _notifCol =
-    FirebaseFirestore.instance.collection('adminNotifications');
+  FirebaseFirestore.instance.collection('notifications');
 
-// ─────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────
 int _getLevel(Map<String, dynamic> data) =>
     (data['level'] ?? data['userLevel'] ?? 0) as int;
 
 int _getStreak(Map<String, dynamic> data) =>
     (data['streak'] ?? data['currentStreak'] ?? 0) as int;
 
-// ═══════════════════════════════════════════════════════════════════
-// ONE-TIME SEED HELPER
-// ═══════════════════════════════════════════════════════════════════
-Future<void> seedExistingNotifications() async {
-  debugPrint('[Seed] Starting seed of adminNotifications…');
-  try {
-    final users =
-        await FirebaseFirestore.instance.collection('users').get();
-
-    for (final doc in users.docs) {
-      final data  = doc.data();
-      final name  = (data['name']  ?? 'Unknown').toString();
-      final email = (data['email'] ?? '—').toString();
-      final level  = _getLevel(data);
-      final streak = _getStreak(data);
-
-      await _notifCol.doc('user_${doc.id}').set({
-        'type':    'newUser',
-        'title':   'New user registered',
-        'body':    '$name ($email) just created an account.',
-        'time':    data['createdAt'] ?? FieldValue.serverTimestamp(),
-        'isRead':  false,
-        'savedAt': FieldValue.serverTimestamp(),
-      });
-
-      if (level >= 10) {
-        await _notifCol.doc('level_${doc.id}').set({
-          'type':    'levelUp',
-          'title':   'Level milestone reached 🏆',
-          'body':    '$name reached Level $level.',
-          'time':    data['updatedAt'] ?? FieldValue.serverTimestamp(),
-          'isRead':  false,
-          'savedAt': FieldValue.serverTimestamp(),
-        });
-      }
-
-      if (streak >= 7) {
-        await _notifCol.doc('streak_${doc.id}').set({
-          'type':    'streakAchieved',
-          'title':   'Streak milestone 🔥',
-          'body':    '$name is on a $streak-day streak!',
-          'time':    data['updatedAt'] ?? FieldValue.serverTimestamp(),
-          'isRead':  false,
-          'savedAt': FieldValue.serverTimestamp(),
-        });
-      }
-    }
-    debugPrint('[Seed] Seeded ${users.docs.length} users.');
-
-    final feedback =
-        await FirebaseFirestore.instance.collection('feedback').get();
-
-    for (final doc in feedback.docs) {
-      final data   = doc.data();
-      final rating = ((data['rating'] ?? 0) as num).toInt();
-      final comment = (data['comment'] ?? data['feedback'] ?? '').toString();
-      await _notifCol.doc('fb_${doc.id}').set({
-        'type':    'feedbackReceived',
-        'title':   'New feedback received ⭐',
-        'body':    'A user left a $rating-star review.${comment.isNotEmpty ? ' "$comment"' : ''}',
-        'time':    data['createdAt'] ?? FieldValue.serverTimestamp(),
-        'isRead':  false,
-        'savedAt': FieldValue.serverTimestamp(),
-      });
-    }
-    debugPrint('[Seed] Seeded ${feedback.docs.length} feedback entries. Done!');
-  } catch (e) {
-    debugPrint('[Seed] ERROR: $e');
-  }
-}
-
 // ─────────────────────────────────────────────
 // NOTIFICATION MODEL
 // ─────────────────────────────────────────────
 enum NotifType {
   newUser,
+  badgeEarned,
   accountDeleted,
   profileUpdated,
   levelUp,
@@ -127,10 +50,19 @@ enum NotifType {
   feedbackReceived,
 }
 
-NotifType _typeFromString(String s) => NotifType.values.firstWhere(
-      (e) => e.name == s,
-      orElse: () => NotifType.newUser,
-    );
+NotifType _typeFromString(String s) {
+  switch (s) {
+    case 'new_user':
+      return NotifType.newUser;
+    case 'badge_earned':
+      return NotifType.badgeEarned;
+    default:
+      return NotifType.values.firstWhere(
+        (type) => type.name == s,
+        orElse: () => NotifType.newUser,
+      );
+  }
+}
 
 class AdminNotification {
   final String    id;
@@ -153,7 +85,9 @@ class AdminNotification {
       DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data()!;
     DateTime time;
-    try { time = (data['time'] as Timestamp).toDate(); }
+    try {
+      time = ((data['createdAt'] ?? data['time']) as Timestamp).toDate();
+    }
     catch (_) { time = DateTime.now(); }
     return AdminNotification(
       id:     doc.id,
@@ -161,7 +95,7 @@ class AdminNotification {
       title:  data['title']  ?? '',
       body:   data['body']   ?? '',
       time:   time,
-      isRead: data['isRead'] == true,
+      isRead: data['read'] == true || data['isRead'] == true,
     );
   }
 
@@ -170,13 +104,20 @@ class AdminNotification {
     'title':   title,
     'body':    body,
     'time':    Timestamp.fromDate(time),
+    'createdAt': Timestamp.fromDate(time),
+    'userId': '',
+    'userName': '',
+    'userEmail': '',
+    'details': <String, dynamic>{},
     'isRead':  isRead,
+    'read':    isRead,
     'savedAt': FieldValue.serverTimestamp(),
   };
 
   Color get color {
     switch (type) {
       case NotifType.newUser:          return _kAccent;
+      case NotifType.badgeEarned:      return _kAmber;
       case NotifType.accountDeleted:   return _kRose;
       case NotifType.profileUpdated:   return _kIndigo;
       case NotifType.levelUp:          return _kAmber;
@@ -189,6 +130,7 @@ class AdminNotification {
   IconData get icon {
     switch (type) {
       case NotifType.newUser:          return Icons.person_add_rounded;
+      case NotifType.badgeEarned:      return Icons.workspace_premium_rounded;
       case NotifType.accountDeleted:   return Icons.person_remove_rounded;
       case NotifType.profileUpdated:   return Icons.manage_accounts_rounded;
       case NotifType.levelUp:          return Icons.emoji_events_rounded;
@@ -247,9 +189,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
   @override
   void initState() {
     super.initState();
-    _notifSub    = _listenNotifs();
-    _userSub     = _listenUsers();
-    _feedbackSub = _listenFeedback();
+    _notifSub = _listenNotifs();
   }
 
   @override
@@ -267,7 +207,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
 
   // ── RESUBSCRIBE HELPERS ───────────────────────────────────────────
   void _resubNotifs() {
-    debugPrint('[Notif] adminNotifications error — resubscribing in 5s');
+    debugPrint('[Notif] notifications error — resubscribing in 5s');
     _notifSub?.cancel();
     Future.delayed(const Duration(seconds: 5), () {
       if (!mounted) return;
@@ -298,7 +238,8 @@ class _NotificationProviderState extends State<NotificationProvider> {
   // ── 1. SAVED NOTIFICATIONS LISTENER ──────────────────────────────
   StreamSubscription _listenNotifs() {
     return _notifCol
-        .orderBy('time', descending: true)
+        .where('type', whereIn: const ['new_user', 'badge_earned'])
+        .orderBy('createdAt', descending: true)
         .limit(100)
         .snapshots()
         .listen(
@@ -312,13 +253,14 @@ class _NotificationProviderState extends State<NotificationProvider> {
           } else if (change.type == DocumentChangeType.modified) {
             final idx = _notifications.indexWhere((n) => n.id == change.doc.id);
             if (idx != -1 && change.doc.data() != null) {
-              _notifications[idx].isRead =
+                _notifications[idx].isRead =
+                  change.doc.data()!['read'] == true ||
                   change.doc.data()!['isRead'] == true;
               changed = true;
             }
           } else if (change.type == DocumentChangeType.added) {
-            if (change.doc.data() != null &&
-                !_seenIds.contains(change.doc.id)) {
+            final data = change.doc.data();
+            if (data != null && !_seenIds.contains(change.doc.id)) {
               try {
                 final n = AdminNotification.fromDoc(change.doc);
                 _notifications.add(n);
@@ -339,7 +281,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
         }
       },
       onError: (e, s) {
-        debugPrint('[Notif] adminNotifications error: $e');
+        debugPrint('[Notif] notifications error: $e');
         _resubNotifs();
       },
       cancelOnError: true,
@@ -384,45 +326,18 @@ class _NotificationProviderState extends State<NotificationProvider> {
 
           if (data == null) continue;
 
+          // Cloud Functions own registration notifications.
           // ── ADDED ─────────────────────────────────────────────────
           if (change.type == DocumentChangeType.added) {
             _userSnapshots[uid] = _snapshot(data);
-            if (!_initialUserLoad) {
-              _add(AdminNotification(
-                id:    'user_$uid',
-                type:  NotifType.newUser,
-                title: 'New user registered 👋',
-                body:  '${data['name'] ?? 'Someone'} (${data['email'] ?? '—'}) just created an account.',
-                time:  _ts(data['createdAt']),
-              ));
-            }
           }
 
           // ── MODIFIED ──────────────────────────────────────────────
           if (change.type == DocumentChangeType.modified) {
             final prev = _userSnapshots[uid] ?? {};
 
-            final prevLevel  = prev['level']  as int? ?? 0;
-            final nowLevel   = _getLevel(data);
             final prevStreak = prev['streak'] as int? ?? 0;
             final nowStreak  = _getStreak(data);
-
-            // Level milestone crossed
-            final milestones = [5, 10, 20, 30, 50];
-            for (final m in milestones) {
-              if (prevLevel < m && nowLevel >= m) {
-                final id = 'level_${uid}_$m';
-                if (!_seenIds.contains(id)) {
-                  _add(AdminNotification(
-                    id:    id,
-                    type:  NotifType.levelUp,
-                    title: 'Level milestone reached 🏆',
-                    body:  '${data['name'] ?? 'A user'} (${data['email'] ?? '—'}) reached Level $nowLevel!',
-                    time:  _ts(data['updatedAt']),
-                  ));
-                }
-              }
-            }
 
             // Streak milestone (every 7 days)
             final streakMilestones = [7, 14, 21, 30, 60, 100];
@@ -543,7 +458,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
     if (idx == -1 || _notifications[idx].isRead) return;
     setState(() => _notifications[idx].isRead = true);
     _notify();
-    _notifCol.doc(id).update({'isRead': true}).catchError((_) {});
+    _notifCol.doc(id).update({'read': true, 'isRead': true}).catchError((_) {});
   }
 
   void markAllRead() {
@@ -553,17 +468,8 @@ class _NotificationProviderState extends State<NotificationProvider> {
     _notify();
     final batch = FirebaseFirestore.instance.batch();
     for (final n in unread) {
-      batch.update(_notifCol.doc(n.id), {'isRead': true});
+      batch.update(_notifCol.doc(n.id), {'read': true, 'isRead': true});
     }
-    batch.commit().catchError((_) {});
-  }
-
-  void clearAll() {
-    final ids = _notifications.map((n) => n.id).toList();
-    setState(() { _notifications.clear(); _seenIds.clear(); });
-    _notify();
-    final batch = FirebaseFirestore.instance.batch();
-    for (final id in ids) batch.delete(_notifCol.doc(id));
     batch.commit().catchError((_) {});
   }
 
@@ -775,12 +681,6 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                           ),
                           child: const Text('Mark all read', style: TextStyle(fontSize: 12)),
                         ),
-                      if (all.isNotEmpty)
-                        IconButton(
-                          icon: const Icon(Icons.delete_sweep_rounded, color: _kSlate, size: 20),
-                          tooltip:   'Clear all',
-                          onPressed: () => provider?.clearAll(),
-                        ),
                       IconButton(
                         icon: const Icon(Icons.close_rounded, color: _kSlate),
                         onPressed: () => Navigator.pop(context),
@@ -822,12 +722,7 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                                 const Divider(color: _kBorder, height: 1),
                             itemBuilder: (_, i) => _NotifTile(
                               notif: items[i],
-                              onTap: () {
-                                provider?.markRead(items[i].id);
-                                if (items[i].type == NotifType.accountDeleted) {
-                                  _showDeletedWarning(context, items[i]);
-                                }
-                              },
+                              onTap: () => provider?.markRead(items[i].id),
                             ),
                           ),
                   ),
@@ -859,35 +754,6 @@ class _NotificationPanelState extends State<_NotificationPanel> {
     );
   }
 
-  void _showDeletedWarning(BuildContext context, AdminNotification notif) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: _kSurface,
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-            side: BorderSide(color: _kRose.withOpacity(0.4))),
-        title: const Row(children: [
-          Icon(Icons.warning_amber_rounded, color: _kRose, size: 22),
-          SizedBox(width: 8),
-          Text('Account Deleted',
-              style: TextStyle(color: _kText, fontSize: 16, fontWeight: FontWeight.bold)),
-        ]),
-        content: Text(notif.body,
-            style: const TextStyle(color: _kSlate, fontSize: 13, height: 1.5)),
-        actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _kRose, foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            ),
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Understood'),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -14,5 +14,18 @@ service cloud.firestore {
     match /feedback/{feedbackId} {
       allow read: if true;
     }
+
+    match /notifications/{notificationId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAll([
+          'type', 'userId', 'userName', 'userEmail', 'details',
+          'createdAt', 'read', 'title', 'body', 'time', 'isRead'
+        ])
+        && request.resource.data.type is string
+        && request.resource.data.read == false;
+      allow update: if request.resource.data.read == true
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['read', 'isRead']);
+    }
   }
 }

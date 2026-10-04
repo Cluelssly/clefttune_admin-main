@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.example.clefttune_admin"
-    compileSdk = 35
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -40,5 +40,5 @@ flutter {
 }
 
 dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:1.2.2")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
