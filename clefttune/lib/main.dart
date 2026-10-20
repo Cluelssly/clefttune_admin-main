@@ -40,7 +40,8 @@ Future<void> _initializePushNotifications() async {
     );
     await _localNotifications
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(_adminNotificationChannel);
 
     final permission = await FirebaseMessaging.instance.requestPermission();
@@ -211,371 +212,31 @@ class BadgeTier {
 }
 
 // ─────────────────────────────────────────────
-// MUTABLE SAMPLE DATA
+// Live Firestore data
 // ─────────────────────────────────────────────
-final List<SampleUser> sampleUsers = [
-  SampleUser(
-    id: '1',
-    name: 'Alex Rivera',
-    email: 'alex.rivera@example.com',
-    level: 32,
-    streak: 14,
-    rating: 4.8,
-    joinedDate: '2024-01-15',
-    lastActive: '2025-05-30',
-  ),
-  SampleUser(
-    id: '2',
-    name: 'Maria Santos',
-    email: 'maria.santos@example.com',
-    level: 25,
-    streak: 7,
-    rating: 4.5,
-    joinedDate: '2024-02-20',
-    lastActive: '2025-05-29',
-  ),
-  SampleUser(
-    id: '3',
-    name: 'James Kim',
-    email: 'james.kim@example.com',
-    level: 18,
-    streak: 21,
-    rating: 4.2,
-    joinedDate: '2024-03-10',
-    lastActive: '2025-05-28',
-  ),
-  SampleUser(
-    id: '4',
-    name: 'Sofia Reyes',
-    email: 'sofia.reyes@example.com',
-    level: 12,
-    streak: 5,
-    rating: 5.0,
-    joinedDate: '2024-04-05',
-    lastActive: '2025-05-27',
-  ),
-  SampleUser(
-    id: '5',
-    name: 'Carlos Mendoza',
-    email: 'carlos.m@example.com',
-    level: 8,
-    streak: 3,
-    rating: 3.8,
-    joinedDate: '2024-05-12',
-    lastActive: '2025-05-26',
-  ),
-  SampleUser(
-    id: '6',
-    name: 'Aisha Johnson',
-    email: 'aisha.j@example.com',
-    level: 45,
-    streak: 30,
-    rating: 4.9,
-    joinedDate: '2023-11-01',
-    lastActive: '2025-05-31',
-  ),
-  SampleUser(
-    id: '7',
-    name: 'David Tan',
-    email: 'david.tan@example.com',
-    level: 3,
-    streak: 0,
-    rating: 4.0,
-    joinedDate: '2025-01-10',
-    lastActive: '2025-05-20',
-  ),
-  SampleUser(
-    id: '8',
-    name: 'Priya Sharma',
-    email: 'priya.sharma@example.com',
-    level: 20,
-    streak: 12,
-    rating: 4.6,
-    joinedDate: '2024-06-22',
-    lastActive: '2025-05-30',
-  ),
-  SampleUser(
-    id: '9',
-    name: 'Liam O\'Brien',
-    email: 'liam.ob@example.com',
-    level: 55,
-    streak: 45,
-    rating: 4.7,
-    joinedDate: '2023-08-14',
-    lastActive: '2025-05-31',
-  ),
-  SampleUser(
-    id: '10',
-    name: 'Elena Vasquez',
-    email: 'elena.v@example.com',
-    level: 15,
-    streak: 8,
-    rating: 3.5,
-    joinedDate: '2024-07-03',
-    lastActive: '2025-05-25',
-  ),
-  SampleUser(
-    id: '11',
-    name: 'Noah Williams',
-    email: 'noah.w@example.com',
-    level: 7,
-    streak: 2,
-    rating: 4.1,
-    joinedDate: '2024-09-18',
-    lastActive: '2025-05-22',
-  ),
-  SampleUser(
-    id: '12',
-    name: 'Fatima Al-Hassan',
-    email: 'fatima.ah@example.com',
-    level: 28,
-    streak: 18,
-    rating: 4.8,
-    joinedDate: '2024-03-30',
-    lastActive: '2025-05-29',
-  ),
-  SampleUser(
-    id: '13',
-    name: 'Jin Park',
-    email: 'jin.park@example.com',
-    level: 10,
-    streak: 6,
-    rating: 4.3,
-    joinedDate: '2024-08-07',
-    lastActive: '2025-05-28',
-  ),
-  SampleUser(
-    id: '14',
-    name: 'Isabella Costa',
-    email: 'isabella.c@example.com',
-    level: 35,
-    streak: 22,
-    rating: 4.6,
-    joinedDate: '2023-12-05',
-    lastActive: '2025-05-31',
-  ),
-  SampleUser(
-    id: '15',
-    name: 'Omar Farooq',
-    email: 'omar.f@example.com',
-    level: 2,
-    streak: 1,
-    rating: 3.0,
-    joinedDate: '2025-03-14',
-    lastActive: '2025-05-10',
-  ),
-];
-
-final List<SampleFeedback> sampleFeedback = [
-  SampleFeedback(
-    userId: '1',
-    userName: 'Alex Rivera',
-    userEmail: 'alex.rivera@example.com',
-    rating: 5,
-    comment:
-        "CleftTune has been life-changing. The voice recognition adapts incredibly well to my speech. I've seen huge improvements in just 3 months!",
-    date: '2025-05-30',
-  ),
-  SampleFeedback(
-    userId: '6',
-    userName: 'Aisha Johnson',
-    userEmail: 'aisha.j@example.com',
-    rating: 5,
-    comment:
-        "The AI corrections are spot-on. It understood my patterns after just a few sessions. Highly recommend to anyone with cleft palate speech differences.",
-    date: '2025-05-29',
-  ),
-  SampleFeedback(
-    userId: '14',
-    userName: 'Isabella Costa',
-    userEmail: 'isabella.c@example.com',
-    rating: 5,
-    comment:
-        "Outstanding app. The training model is incredibly accurate and the interface is clean and easy to use.",
-    date: '2025-05-28',
-  ),
-  SampleFeedback(
-    userId: '9',
-    userName: "Liam O'Brien",
-    userEmail: 'liam.ob@example.com',
-    rating: 4,
-    comment:
-        "Really solid app. The streak system keeps me motivated. Would love a dark mode option though.",
-    date: '2025-05-27',
-  ),
-  SampleFeedback(
-    userId: '8',
-    userName: 'Priya Sharma',
-    userEmail: 'priya.sharma@example.com',
-    rating: 5,
-    comment:
-        "I was skeptical at first but the personalized voice model genuinely works. My family says I'm much easier to understand now.",
-    date: '2025-05-26',
-  ),
-  SampleFeedback(
-    userId: '4',
-    userName: 'Sofia Reyes',
-    userEmail: 'sofia.reyes@example.com',
-    rating: 5,
-    comment:
-        "The correction system is brilliant. It learned my specific phoneme substitutions within days. 10/10!",
-    date: '2025-05-25',
-  ),
-  SampleFeedback(
-    userId: '2',
-    userName: 'Maria Santos',
-    userEmail: 'maria.santos@example.com',
-    rating: 4,
-    comment:
-        "Great app! The training screen is intuitive. Minor feedback: the history page could show more details.",
-    date: '2025-05-24',
-  ),
-  SampleFeedback(
-    userId: '12',
-    userName: 'Fatima Al-Hassan',
-    userEmail: 'fatima.ah@example.com',
-    rating: 5,
-    comment:
-        "I've tried many similar apps and nothing compares to CleftTune. The AI is remarkably good at understanding cleft palate speech.",
-    date: '2025-05-23',
-  ),
-  SampleFeedback(
-    userId: '3',
-    userName: 'James Kim',
-    userEmail: 'james.kim@example.com',
-    rating: 4,
-    comment:
-        "Good progress tracking. The leaderboard feature motivates me to keep training every day.",
-    date: '2025-05-22',
-  ),
-  SampleFeedback(
-    userId: '5',
-    userName: 'Carlos Mendoza',
-    userEmail: 'carlos.m@example.com',
-    rating: 4,
-    comment:
-        "The app works well. Support team responded quickly when I had a question. Overall very happy.",
-    date: '2025-05-21',
-  ),
-  SampleFeedback(
-    userId: '10',
-    userName: 'Elena Vasquez',
-    userEmail: 'elena.v@example.com',
-    rating: 3,
-    comment:
-        "Decent app but the processing can be slow on older devices. Hope performance improves in future updates.",
-    date: '2025-05-20',
-  ),
-  SampleFeedback(
-    userId: '13',
-    userName: 'Jin Park',
-    userEmail: 'jin.park@example.com',
-    rating: 4,
-    comment:
-        "Steady improvement after 2 months of use. The badge system is a fun touch!",
-    date: '2025-05-19',
-  ),
-];
+final List<SampleUser> sampleUsers = [];
+final List<SampleFeedback> sampleFeedback = [];
 
 // ─────────────────────────────────────────────
-// MUTABLE BADGE TIERS  (admin CRUD)
+// Firestore-managed badge tiers
 // ─────────────────────────────────────────────
-final List<BadgeTier> badgeTiers = [
-  BadgeTier(
-    id: 'b1',
-    emoji: '🌱',
-    label: 'Seedling',
-    minLevel: 0,
-    color: kEmerald,
-    tasks: [
-      'Complete your profile setup',
-      'Finish your first training session',
-      'Practice for 3 days in a row',
-      'Log your first recording',
-      'Review your first feedback report',
-    ],
-  ),
-  BadgeTier(
-    id: 'b2',
-    emoji: '🥉',
-    label: 'Bronze',
-    minLevel: 5,
-    color: const Color(0xFFCD7F32),
-    tasks: [
-      'Reach a 5-day streak',
-      'Complete 10 training sessions',
-      'Score 80%+ on a phoneme drill',
-      'Finish the beginner exercise set',
-      'Submit your first app feedback',
-    ],
-  ),
-  BadgeTier(
-    id: 'b3',
-    emoji: '🥈',
-    label: 'Silver',
-    minLevel: 10,
-    color: kSlate,
-    tasks: [
-      'Reach a 10-day streak',
-      'Complete 25 training sessions',
-      'Score 85%+ on 3 phoneme drills',
-      'Finish the intermediate exercise set',
-      'Help another user by sharing a tip',
-    ],
-  ),
-  BadgeTier(
-    id: 'b4',
-    emoji: '🥇',
-    label: 'Gold',
-    minLevel: 20,
-    color: kAmber,
-    tasks: [
-      'Reach a 20-day streak',
-      'Complete 50 training sessions',
-      'Score 90%+ on 5 phoneme drills',
-      'Finish the advanced exercise set',
-      'Maintain a 4.5+ self-rated average',
-    ],
-  ),
-  BadgeTier(
-    id: 'b5',
-    emoji: '💎',
-    label: 'Diamond',
-    minLevel: 30,
-    color: const Color(0xFF0EA5E9),
-    tasks: [
-      'Reach a 30-day streak',
-      'Complete 100 training sessions',
-      'Score 95%+ on 10 phoneme drills',
-      'Finish all exercise sets',
-      'Mentor a new user through onboarding',
-    ],
-  ),
-  BadgeTier(
-    id: 'b6',
-    emoji: '🏆',
-    label: 'Legend',
-    minLevel: 50,
-    color: const Color(0xFFB45309),
-    tasks: [
-      'Reach a 50-day streak',
-      'Complete 200 training sessions',
-      'Achieve a perfect score on all drills',
-      'Finish every exercise set twice',
-      'Top the leaderboard for a full month',
-    ],
-  ),
-];
+final List<BadgeTier> badgeTiers = [];
 
 // ─────────────────────────────────────────────
 // HELPERS  (resolve badge from live badgeTiers list)
 // ─────────────────────────────────────────────
 BadgeTier _getBadgeTierFor(int level) {
-  final sorted = [...badgeTiers]
+  final eligible = badgeTiers.where((tier) => level >= tier.minLevel).toList()
     ..sort((a, b) => b.minLevel.compareTo(a.minLevel));
-  return sorted.firstWhere(
-    (t) => level >= t.minLevel,
-    orElse: () => badgeTiers.first,
+  if (eligible.isNotEmpty) return eligible.first;
+
+  return BadgeTier(
+    id: '',
+    emoji: '🏅',
+    label: 'No badge configured',
+    minLevel: 0,
+    color: kSlate,
+    tasks: const [],
   );
 }
 
@@ -707,38 +368,80 @@ class _AdminShellState extends State<AdminShell> {
   int _selectedIndex = 0;
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _usersPageKey = GlobalKey<_UsersPageState>();
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _usersSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+  _feedbackSubscription;
 
   @override
   void initState() {
     super.initState();
-    _loadFirestoreData();
+    _listenForUsers();
+    _listenForFeedback();
   }
 
-  Future<void> _loadFirestoreData() async {
-    try {
-      final results = await Future.wait([
-        FirebaseFirestore.instance.collection('users').get(),
-        FirebaseFirestore.instance.collection('feedback').get(),
-      ]);
-      final users = results[0].docs.map(_userFromDocument).toList();
-      final feedback = results[1].docs.map(_feedbackFromDocument).toList();
+  @override
+  void dispose() {
+    _usersSubscription?.cancel();
+    _feedbackSubscription?.cancel();
+    super.dispose();
+  }
 
-      if (!mounted) return;
-      setState(() {
-        sampleUsers
-          ..clear()
-          ..addAll(users);
-        sampleFeedback
-          ..clear()
-          ..addAll(feedback);
-      });
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load Firebase data: $error')),
+  void _listenForUsers() {
+    _usersSubscription = FirebaseFirestore.instance
+        .collection('users')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            final users = snapshot.docs.map(_userFromDocument).toList();
+            if (!mounted) return;
+            setState(() {
+              sampleUsers
+                ..clear()
+                ..addAll(users);
+            });
+          },
+          onError: (Object error) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not load users from Firebase: $error'),
+              ),
+            );
+          },
         );
-      }
-    }
+  }
+
+  void _listenForFeedback() {
+    _feedbackSubscription = FirebaseFirestore.instance
+        .collection('feedback')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            final feedback = snapshot.docs.map(_feedbackFromDocument).toList()
+              ..sort((a, b) {
+                final aDate = DateTime.tryParse(a.date);
+                final bDate = DateTime.tryParse(b.date);
+                if (aDate == null) return bDate == null ? 0 : 1;
+                if (bDate == null) return -1;
+                return bDate.compareTo(aDate);
+              });
+
+            if (!mounted) return;
+            setState(() {
+              sampleFeedback
+                ..clear()
+                ..addAll(feedback);
+            });
+          },
+          onError: (Object error) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not load feedback from Firebase: $error'),
+              ),
+            );
+          },
+        );
   }
 
   // Admin-managed content pages.
@@ -798,12 +501,12 @@ class _AdminShellState extends State<AdminShell> {
               ),
               if (isMobile)
                 Positioned(
-                top: 12,
-                left: 12,
-                child: _HamburgerButton(
-                  onTap: () => _scaffoldKey.currentState?.openDrawer(),
+                  top: 12,
+                  left: 12,
+                  child: _HamburgerButton(
+                    onTap: () => _scaffoldKey.currentState?.openDrawer(),
+                  ),
                 ),
-              ),
             ],
           ),
         ),
@@ -840,7 +543,8 @@ SampleFeedback _feedbackFromDocument(
     userName: (data['userName'] ?? data['name'] ?? 'Unknown user').toString(),
     userEmail: (data['userEmail'] ?? data['email'] ?? '—').toString(),
     rating: _asInt(data['rating']),
-    comment: (data['comment'] ?? data['feedback'] ?? '').toString(),
+    comment: (data['comment'] ?? data['feedback'] ?? data['message'] ?? '')
+        .toString(),
     date: _asDate(data['date'] ?? data['createdAt']),
   );
 }
@@ -1019,7 +723,7 @@ class _SidebarContent extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 const Text(
-                  'Sample Data Mode',
+                  'Firestore data',
                   style: TextStyle(color: Colors.white38, fontSize: 11),
                 ),
               ],
@@ -1092,7 +796,14 @@ class DashboardPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 800;
-    final recentUsers = sampleUsers.take(5).toList();
+    final recentUsers = [...sampleUsers]
+      ..sort((a, b) {
+        final aDate = DateTime.tryParse(a.joinedDate);
+        final bDate = DateTime.tryParse(b.joinedDate);
+        if (aDate == null) return bDate == null ? 0 : 1;
+        if (bDate == null) return -1;
+        return bDate.compareTo(aDate);
+      });
     final topStreaks = [...sampleUsers]
       ..sort((a, b) => b.streak.compareTo(a.streak));
 
@@ -1133,19 +844,19 @@ class DashboardPage extends StatelessWidget {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: kAmber.withOpacity(0.1),
+                  color: kAccent.withOpacity(0.08),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: kAmber.withOpacity(0.4)),
+                  border: Border.all(color: kAccent.withOpacity(0.25)),
                 ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.data_array_rounded, color: kAmber, size: 14),
+                    Icon(Icons.cloud_done_rounded, color: kAccent, size: 14),
                     SizedBox(width: 6),
                     Text(
-                      'Sample Data',
+                      'Firestore data',
                       style: TextStyle(
-                        color: kAmber,
+                        color: kAccent,
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1209,7 +920,14 @@ class DashboardPage extends StatelessWidget {
               children: [
                 _SectionTitle(icon: Icons.group_rounded, title: 'Recent Users'),
                 const SizedBox(height: 16),
-                for (final u in recentUsers) _UserSummaryTile(user: u),
+                if (recentUsers.isEmpty)
+                  const Text(
+                    'No user records found in Firestore.',
+                    style: TextStyle(color: kSlate, fontSize: 13),
+                  )
+                else
+                  for (final u in recentUsers.take(5))
+                    _UserSummaryTile(user: u),
               ],
             ),
           ),
@@ -1225,7 +943,13 @@ class DashboardPage extends StatelessWidget {
                   title: 'Top Streaks',
                 ),
                 const SizedBox(height: 14),
-                for (final u in topStreaks.take(5)) _StreakTile(user: u),
+                if (topStreaks.isEmpty)
+                  const Text(
+                    'User streaks will appear here when records are available.',
+                    style: TextStyle(color: kSlate, fontSize: 13),
+                  )
+                else
+                  for (final u in topStreaks.take(5)) _StreakTile(user: u),
               ],
             ),
           ),
@@ -1429,11 +1153,13 @@ class _UsersPageState extends State<UsersPage> {
           _Card(
             padding: EdgeInsets.zero,
             child: filtered.isEmpty
-                ? const Padding(
+                ? Padding(
                     padding: EdgeInsets.all(32),
                     child: Center(
                       child: Text(
-                        'No users found.',
+                        sampleUsers.isEmpty
+                            ? 'No user records found in Firestore.'
+                            : 'No users match your search.',
                         style: TextStyle(color: kSlate, fontSize: 14),
                       ),
                     ),
@@ -2305,6 +2031,17 @@ class _BadgesPageState extends State<BadgesPage> {
           LayoutBuilder(
             builder: (ctx, constraints) {
               final cols = constraints.maxWidth > 700 ? 2 : 1;
+              if (sorted.isEmpty) {
+                return const _Card(
+                  child: Center(
+                    child: Text(
+                      'No badge tiers found in Firestore. Add a badge to get started.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: kSlate, fontSize: 13),
+                    ),
+                  ),
+                );
+              }
               return GridView.builder(
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
@@ -2328,7 +2065,7 @@ class _BadgesPageState extends State<BadgesPage> {
 
           const SizedBox(height: 20),
 
-          // Preview: which badge each sample user holds
+          // Preview: which badge each Firestore user holds
           _Card(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2343,50 +2080,58 @@ class _BadgesPageState extends State<BadgesPage> {
                   style: TextStyle(color: kSlate, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: sampleUsers.map((u) {
-                    final tier = _getBadgeTierFor(u.level);
-                    return Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: tier.color.withOpacity(0.08),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: tier.color.withOpacity(0.3)),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            tier.emoji,
-                            style: const TextStyle(fontSize: 13),
+                if (sampleUsers.isEmpty)
+                  const Text(
+                    'No user records found in Firestore.',
+                    style: TextStyle(color: kSlate, fontSize: 13),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: sampleUsers.map((u) {
+                      final tier = _getBadgeTierFor(u.level);
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: tier.color.withOpacity(0.08),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: tier.color.withOpacity(0.3),
                           ),
-                          const SizedBox(width: 5),
-                          Text(
-                            u.name.split(' ').first,
-                            style: TextStyle(
-                              color: tier.color,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              tier.emoji,
+                              style: const TextStyle(fontSize: 13),
                             ),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Lv.${u.level}',
-                            style: TextStyle(
-                              color: tier.color.withOpacity(0.7),
-                              fontSize: 11,
+                            const SizedBox(width: 5),
+                            Text(
+                              u.name.split(' ').first,
+                              style: TextStyle(
+                                color: tier.color,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Lv.${u.level}',
+                              style: TextStyle(
+                                color: tier.color.withOpacity(0.7),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
               ],
             ),
           ),
@@ -2412,7 +2157,7 @@ class _BadgeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Count how many sample users currently hold this tier
+    // Count how many Firestore users currently hold this tier.
     final holders = sampleUsers
         .where((u) => _getBadgeTierFor(u.level).id == tier.id)
         .length;
@@ -3006,14 +2751,27 @@ class _FeedbackPageState extends State<FeedbackPage> {
 
           _Card(
             padding: EdgeInsets.zero,
-            child: Column(
-              children: [
-                for (int i = 0; i < _filtered.length; i++) ...[
-                  if (i != 0) const Divider(color: kBorder, height: 1),
-                  _FeedbackTile(feedback: _filtered[i]),
-                ],
-              ],
-            ),
+            child: _filtered.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Center(
+                      child: Text(
+                        sampleFeedback.isEmpty
+                            ? 'No feedback records found in Firestore.'
+                            : 'No feedback matches this rating filter.',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: kSlate, fontSize: 14),
+                      ),
+                    ),
+                  )
+                : Column(
+                    children: [
+                      for (int i = 0; i < _filtered.length; i++) ...[
+                        if (i != 0) const Divider(color: kBorder, height: 1),
+                        _FeedbackTile(feedback: _filtered[i]),
+                      ],
+                    ],
+                  ),
           ),
         ],
       ),
