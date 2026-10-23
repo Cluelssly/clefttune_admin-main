@@ -1,11 +1,11 @@
 {
-    "name": "clefttune_admin",
-    "short_name": "clefttune_admin",
+    "name": "VoiceMate Admin",
+    "short_name": "VoiceMate",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "description": "VoiceMate Admin dashboard",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

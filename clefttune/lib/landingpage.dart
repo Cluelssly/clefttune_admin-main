@@ -194,7 +194,7 @@ class _AdminLandingPageState extends State<AdminLandingPage>
                     ),
                     const SizedBox(height: 18),
                     const Text(
-                      'CleftTune',
+                      'VoiceMate',
                       style: TextStyle(
                         color: kText,
                         fontSize: 28,
@@ -206,14 +206,19 @@ class _AdminLandingPageState extends State<AdminLandingPage>
                     const Text(
                       'Admin Panel',
                       style: TextStyle(
-                          color: kSlate, fontSize: 13, letterSpacing: 1.0),
+                        color: kSlate,
+                        fontSize: 13,
+                        letterSpacing: 1.0,
+                      ),
                     ),
                     const SizedBox(height: 40),
 
                     // Card
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 28, vertical: 32),
+                        horizontal: 28,
+                        vertical: 32,
+                      ),
                       decoration: BoxDecoration(
                         color: kSurface,
                         borderRadius: BorderRadius.circular(24),
@@ -251,8 +256,8 @@ class _AdminLandingPageState extends State<AdminLandingPage>
                                 hasError
                                     ? _error!
                                     : _isSuccess
-                                        ? 'Access granted ✓'
-                                        : 'Enter admin password',
+                                    ? 'Access granted ✓'
+                                    : 'Enter admin password',
                               ),
                             ),
                             const SizedBox(height: 24),
@@ -260,7 +265,9 @@ class _AdminLandingPageState extends State<AdminLandingPage>
                             // Email (fixed)
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 16),
+                                horizontal: 16,
+                                vertical: 16,
+                              ),
                               decoration: BoxDecoration(
                                 color: kBg,
                                 borderRadius: BorderRadius.circular(14),
@@ -268,15 +275,20 @@ class _AdminLandingPageState extends State<AdminLandingPage>
                               ),
                               child: Row(
                                 children: [
-                                  const Icon(Icons.mail_outline,
-                                      color: kSlate, size: 20),
+                                  const Icon(
+                                    Icons.mail_outline,
+                                    color: kSlate,
+                                    size: 20,
+                                  ),
                                   const SizedBox(width: 12),
                                   Expanded(
                                     child: Text(
                                       _kAdminEmail,
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
-                                          color: kText, fontSize: 16),
+                                        color: kText,
+                                        fontSize: 16,
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -322,11 +334,13 @@ class _AdminLandingPageState extends State<AdminLandingPage>
                             SizedBox(
                               height: 50,
                               child: ElevatedButton(
-                                onPressed:
-                                    (_isLoading || _isSuccess) ? null : _login,
+                                onPressed: (_isLoading || _isSuccess)
+                                    ? null
+                                    : _login,
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor:
-                                      _isSuccess ? kEmerald : kAccent,
+                                  backgroundColor: _isSuccess
+                                      ? kEmerald
+                                      : kAccent,
                                   foregroundColor: Colors.white,
                                   disabledBackgroundColor: _isSuccess
                                       ? kEmerald
@@ -361,7 +375,7 @@ class _AdminLandingPageState extends State<AdminLandingPage>
                     ),
                     const SizedBox(height: 28),
                     Text(
-                      '© ${DateTime.now().year} CleftTune · Secure Access',
+                      '© ${DateTime.now().year} VoiceMate · Secure Access',
                       style: const TextStyle(color: kSlate, fontSize: 11),
                     ),
                   ],
@@ -381,9 +395,9 @@ class _AdminLandingPageState extends State<AdminLandingPage>
     Widget? suffix,
   }) {
     OutlineInputBorder border(Color c, [double w = 1.5]) => OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: BorderSide(color: c, width: w),
-        );
+      borderRadius: BorderRadius.circular(14),
+      borderSide: BorderSide(color: c, width: w),
+    );
 
     return InputDecoration(
       labelText: label,
@@ -393,8 +407,7 @@ class _AdminLandingPageState extends State<AdminLandingPage>
       suffixIcon: suffix,
       filled: true,
       fillColor: kBg,
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       enabledBorder: border(hasError ? kRose.withOpacity(0.6) : kBorder),
       disabledBorder: border(kBorder),
       focusedBorder: border(hasError ? kRose : kAccent, 2),

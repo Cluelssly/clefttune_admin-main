@@ -658,7 +658,7 @@ class _SidebarContent extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 const Text(
-                  'CleftTune',
+                  'VoiceMate',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20,

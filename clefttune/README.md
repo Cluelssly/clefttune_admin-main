@@ -1,4 +1,4 @@
-# CleftTune Admin
+# VoiceMate Admin
 
 Flutter admin dashboard connected to the `appcleft2026-55337` Firebase project.
 The web and Android Firebase options are configured in `lib/firebase_options.dart`.
