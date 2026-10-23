@@ -125,6 +125,7 @@ class SampleUser {
   double rating;
   String joinedDate;
   String lastActive;
+  String badgeId; // badge the user has actually EARNED (written by user app)
 
   SampleUser({
     required this.id,
@@ -135,6 +136,7 @@ class SampleUser {
     required this.rating,
     required this.joinedDate,
     required this.lastActive,
+    this.badgeId = '',
   });
 
   SampleUser copyWith({
@@ -145,6 +147,7 @@ class SampleUser {
     double? rating,
     String? joinedDate,
     String? lastActive,
+    String? badgeId,
   }) => SampleUser(
     id: id,
     name: name ?? this.name,
@@ -154,6 +157,7 @@ class SampleUser {
     rating: rating ?? this.rating,
     joinedDate: joinedDate ?? this.joinedDate,
     lastActive: lastActive ?? this.lastActive,
+    badgeId: badgeId ?? this.badgeId,
   );
 }
 
@@ -223,33 +227,45 @@ final List<SampleFeedback> sampleFeedback = [];
 final List<BadgeTier> badgeTiers = [];
 
 // ─────────────────────────────────────────────
-// HELPERS  (resolve badge from live badgeTiers list)
+// HELPERS
+// The badge a user holds comes from what the USER APP saved (badgeId) —
+// i.e. the badge whose 5 tasks they actually completed.
 // ─────────────────────────────────────────────
-BadgeTier _getBadgeTierFor(int level) {
-  final eligible = badgeTiers.where((tier) => level >= tier.minLevel).toList()
-    ..sort((a, b) => b.minLevel.compareTo(a.minLevel));
-  if (eligible.isNotEmpty) return eligible.first;
-
-  return BadgeTier(
-    id: '',
-    emoji: '🏅',
-    label: 'No badge configured',
-    minLevel: 0,
-    color: kSlate,
-    tasks: const [],
-  );
+BadgeTier? _earnedTierOf(SampleUser u) {
+  if (u.badgeId.isEmpty) return null;
+  for (final t in badgeTiers) {
+    if (t.id == u.badgeId) return t;
+  }
+  return null;
 }
 
-String _getBadgeEmoji(int level) => _getBadgeTierFor(level).emoji;
-String _getBadgeLabel(int level) => _getBadgeTierFor(level).label;
-Color _getBadgeColor(int level) => _getBadgeTierFor(level).color;
+String _userBadgeEmoji(SampleUser u) => _earnedTierOf(u)?.emoji ?? '🎯';
+String _userBadgeLabel(SampleUser u) => _earnedTierOf(u)?.label ?? 'No badge yet';
+Color _userBadgeColor(SampleUser u) => _earnedTierOf(u)?.color ?? kSlate;
 
-int _nextUserId() {
-  if (sampleUsers.isEmpty) return 1;
-  return sampleUsers
-          .map((u) => int.tryParse(u.id) ?? 0)
-          .reduce((a, b) => a > b ? a : b) +
-      1;
+BadgeTier _badgeTierFromDoc(String id, Map<String, dynamic> data) {
+  final rawTasks = data['tasks'];
+  final tasks = rawTasks is List
+      ? rawTasks.map((task) => task.toString()).toList()
+      : (data['badge_description'] ?? '')
+            .toString()
+            .split(' | ')
+            .where((task) => task.trim().isNotEmpty)
+            .toList();
+  while (tasks.length < 5) {
+    tasks.add('');
+  }
+
+  final rawColor = data['color'];
+  final colorValue = rawColor is num ? rawColor.toInt() : kAccent.value;
+  return BadgeTier(
+    id: id,
+    emoji: (data['emoji'] ?? '🏅').toString(),
+    label: (data['badge_name'] ?? 'Unnamed Badge').toString(),
+    minLevel: (data['min_level'] as num?)?.toInt() ?? 0,
+    color: Color(colorValue),
+    tasks: tasks.take(5).toList(),
+  );
 }
 
 int _nextBadgeId() {
@@ -279,13 +295,21 @@ class _AppStats {
     final total = sampleUsers.length;
     final activeStreaks = sampleUsers.where((u) => u.streak > 0).length;
     final highLevel = sampleUsers.where((u) => u.level >= 10).length;
+
+    // Prefer the per-user rating; fall back to the feedback collection.
     final ratings = sampleUsers
         .where((u) => u.rating > 0)
         .map((u) => u.rating)
         .toList();
-    final avgRating = ratings.isEmpty
-        ? 0.0
-        : ratings.reduce((a, b) => a + b) / ratings.length;
+    double avgRating;
+    if (ratings.isNotEmpty) {
+      avgRating = ratings.reduce((a, b) => a + b) / ratings.length;
+    } else {
+      final fb = sampleFeedback.where((f) => f.rating > 0).toList();
+      avgRating = fb.isEmpty
+          ? 0.0
+          : fb.map((f) => f.rating).reduce((a, b) => a + b) / fb.length;
+    }
 
     return _AppStats(
       total: total,
@@ -371,10 +395,12 @@ class _AdminShellState extends State<AdminShell> {
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _usersSubscription;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
   _feedbackSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _badgesSubscription;
 
   @override
   void initState() {
     super.initState();
+    _listenForBadges();
     _listenForUsers();
     _listenForFeedback();
   }
@@ -383,7 +409,35 @@ class _AdminShellState extends State<AdminShell> {
   void dispose() {
     _usersSubscription?.cancel();
     _feedbackSubscription?.cancel();
+    _badgesSubscription?.cancel();
     super.dispose();
+  }
+
+  // Badges are now live for the WHOLE admin panel (not only the Badges page),
+  // so badge names/emojis show correctly everywhere.
+  void _listenForBadges() {
+    _badgesSubscription = FirebaseFirestore.instance
+        .collection('badges')
+        .snapshots()
+        .listen(
+          (snapshot) {
+            final loaded = snapshot.docs
+                .map((doc) => _badgeTierFromDoc(doc.id, doc.data()))
+                .toList();
+            if (!mounted) return;
+            setState(() {
+              badgeTiers
+                ..clear()
+                ..addAll(loaded);
+            });
+          },
+          onError: (Object error) {
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('Could not load badges: $error')),
+            );
+          },
+        );
   }
 
   void _listenForUsers() {
@@ -519,18 +573,30 @@ SampleUser _userFromDocument(QueryDocumentSnapshot<Map<String, dynamic>> doc) {
   return _userFromData(doc.id, doc.data());
 }
 
+// Reads the fields the VoiceMate user app writes to users/{uid}:
+//   level, streak (also accepts trainingStreak), badgeId, rating, lastActive...
 SampleUser _userFromData(String id, Map<String, dynamic> data) {
+  final email = (data['email'] ?? '—').toString();
+  final fallbackName = email.contains('@') ? email.split('@').first : '';
+  final rawName = (data['name'] ?? data['displayName'] ?? '').toString().trim();
+  final name = rawName.isNotEmpty
+      ? rawName
+      : (fallbackName.isNotEmpty ? fallbackName : 'Unknown user');
+
   return SampleUser(
     id: id,
-    name: (data['name'] ?? data['displayName'] ?? 'Unknown user').toString(),
-    email: (data['email'] ?? '—').toString(),
+    name: name,
+    email: email,
     level: _asInt(data['level'] ?? data['userLevel']),
-    streak: _asInt(data['streak'] ?? data['currentStreak']),
+    streak: _asInt(
+      data['streak'] ?? data['currentStreak'] ?? data['trainingStreak'],
+    ),
     rating: _asDouble(data['rating'] ?? data['averageRating']),
     joinedDate: _asDate(data['joinedDate'] ?? data['createdAt']),
     lastActive: _asDate(
       data['lastActive'] ?? data['lastActiveAt'] ?? data['updatedAt'],
     ),
+    badgeId: (data['badgeId'] ?? '').toString(),
   );
 }
 
@@ -538,10 +604,24 @@ SampleFeedback _feedbackFromDocument(
   QueryDocumentSnapshot<Map<String, dynamic>> doc,
 ) {
   final data = doc.data();
+  final userId = (data['userId'] ?? doc.id).toString();
+
+  // Older feedback has no name/email — look the user up from live users list.
+  SampleUser? match;
+  for (final u in sampleUsers) {
+    if (u.id == userId) {
+      match = u;
+      break;
+    }
+  }
+
   return SampleFeedback(
-    userId: (data['userId'] ?? doc.id).toString(),
-    userName: (data['userName'] ?? data['name'] ?? 'Unknown user').toString(),
-    userEmail: (data['userEmail'] ?? data['email'] ?? '—').toString(),
+    userId: userId,
+    userName:
+        (data['userName'] ?? data['name'] ?? match?.name ?? 'Unknown user')
+            .toString(),
+    userEmail: (data['userEmail'] ?? data['email'] ?? match?.email ?? '—')
+        .toString(),
     rating: _asInt(data['rating']),
     comment: (data['comment'] ?? data['feedback'] ?? data['message'] ?? '')
         .toString(),
@@ -1023,7 +1103,7 @@ class _UsersPageState extends State<UsersPage> {
               _DetailRow('Level', '${user.level}'),
               _DetailRow(
                 'Badge',
-                '${_getBadgeEmoji(user.level)} ${_getBadgeLabel(user.level)}',
+                '${_userBadgeEmoji(user)} ${_userBadgeLabel(user)}',
               ),
               _DetailRow('Streak', '🔥 ${user.streak} days'),
               _DetailRow('Rating', '⭐ ${user.rating.toStringAsFixed(1)} / 5.0'),
@@ -1084,7 +1164,6 @@ class _UsersPageState extends State<UsersPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header — no Add button (read-only)
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -1094,7 +1173,6 @@ class _UsersPageState extends State<UsersPage> {
                   subtitle: '${sampleUsers.length} registered · read-only',
                 ),
               ),
-              // Read-only badge
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -1125,7 +1203,6 @@ class _UsersPageState extends State<UsersPage> {
           ),
           const SizedBox(height: 20),
 
-          // Search
           Container(
             decoration: BoxDecoration(
               color: kSurface,
@@ -1149,7 +1226,6 @@ class _UsersPageState extends State<UsersPage> {
           ),
           const SizedBox(height: 16),
 
-          // Users table
           _Card(
             padding: EdgeInsets.zero,
             child: filtered.isEmpty
@@ -1166,7 +1242,6 @@ class _UsersPageState extends State<UsersPage> {
                   )
                 : Column(
                     children: [
-                      // Header row
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -1181,7 +1256,7 @@ class _UsersPageState extends State<UsersPage> {
                             Expanded(child: _ColHeader('LEVEL')),
                             Expanded(child: _ColHeader('STREAK')),
                             Expanded(child: _ColHeader('RATING')),
-                            SizedBox(width: 40), // space for single view button
+                            SizedBox(width: 40),
                           ],
                         ),
                       ),
@@ -1210,7 +1285,7 @@ class _UserRowReadOnly extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final badgeColor = _getBadgeColor(user.level);
+    final badgeColor = _userBadgeColor(user);
 
     return InkWell(
       onTap: onView,
@@ -1263,7 +1338,7 @@ class _UserRowReadOnly extends StatelessWidget {
               child: Row(
                 children: [
                   Text(
-                    _getBadgeEmoji(user.level),
+                    _userBadgeEmoji(user),
                     style: const TextStyle(fontSize: 14),
                   ),
                   const SizedBox(width: 4),
@@ -1314,7 +1389,6 @@ class _UserRowReadOnly extends StatelessWidget {
                 ],
               ),
             ),
-            // View only
             _IconBtn(
               icon: Icons.visibility_rounded,
               color: kAccent,
@@ -1330,6 +1404,8 @@ class _UserRowReadOnly extends StatelessWidget {
 
 // ═══════════════════════════════════════════════════════════════════
 // PAGE: BADGES  (full CRUD)
+// Badge tiers are now streamed live by AdminShell, so this page only
+// handles create / edit / delete.
 // ═══════════════════════════════════════════════════════════════════
 class BadgesPage extends StatefulWidget {
   final VoidCallback? onChanged;
@@ -1340,60 +1416,6 @@ class BadgesPage extends StatefulWidget {
 }
 
 class _BadgesPageState extends State<BadgesPage> {
-  @override
-  void initState() {
-    super.initState();
-    _loadBadges();
-  }
-
-  Future<void> _loadBadges() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('badges')
-          .get();
-      if (!mounted) return;
-
-      final loaded = snapshot.docs.map((doc) {
-        final data = doc.data();
-        final rawTasks = data['tasks'];
-        final tasks = rawTasks is List
-            ? rawTasks.map((task) => task.toString()).toList()
-            : (data['badge_description'] ?? '')
-                  .toString()
-                  .split(' | ')
-                  .where((task) => task.trim().isNotEmpty)
-                  .toList();
-        while (tasks.length < 5) {
-          tasks.add('');
-        }
-
-        final rawColor = data['color'];
-        final colorValue = rawColor is num ? rawColor.toInt() : kAccent.value;
-        return BadgeTier(
-          id: doc.id,
-          emoji: (data['emoji'] ?? '🏅').toString(),
-          label: (data['badge_name'] ?? 'Unnamed Badge').toString(),
-          minLevel: (data['min_level'] as num?)?.toInt() ?? 0,
-          color: Color(colorValue),
-          tasks: tasks.take(5).toList(),
-        );
-      }).toList();
-
-      setState(() {
-        badgeTiers
-          ..clear()
-          ..addAll(loaded);
-      });
-      widget.onChanged?.call();
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not load badges: $error')),
-        );
-      }
-    }
-  }
-
   // Preset color swatches for the color picker
   static const _colorSwatches = [
     kEmerald,
@@ -1757,18 +1779,7 @@ class _BadgesPageState extends State<BadgesPage> {
                   return;
                 }
 
-                setState(() {
-                  if (isEdit) {
-                    final idx = badgeTiers.indexWhere(
-                      (b) => b.id == existing.id,
-                    );
-                    if (idx != -1) {
-                      badgeTiers[idx] = badge;
-                    }
-                  } else {
-                    badgeTiers.add(badge);
-                  }
-                });
+                // The live badges stream in AdminShell updates the list.
                 widget.onChanged?.call();
                 Navigator.pop(ctx);
               },
@@ -1820,7 +1831,7 @@ class _BadgesPageState extends State<BadgesPage> {
               const Divider(color: kBorder),
               const SizedBox(height: 8),
               Text(
-                'Complete these 5 tasks to earn the ${badge.label} badge (min. level ${badge.minLevel}):',
+                'Users must complete these 5 tasks in the VoiceMate app to earn the ${badge.label} badge (min. level ${badge.minLevel}):',
                 style: const TextStyle(color: kSlate, fontSize: 12),
               ),
               const SizedBox(height: 12),
@@ -1910,7 +1921,7 @@ class _BadgesPageState extends State<BadgesPage> {
               ),
               const TextSpan(
                 text:
-                    ' badge tier? Users at this level will fall back to the next lower tier.',
+                    ' badge tier? Users will no longer see it or its tasks in the app.',
               ),
             ],
           ),
@@ -1944,7 +1955,6 @@ class _BadgesPageState extends State<BadgesPage> {
                 }
                 return;
               }
-              setState(() => badgeTiers.removeWhere((b) => b.id == badge.id));
               widget.onChanged?.call();
               Navigator.pop(ctx);
             },
@@ -2018,8 +2028,9 @@ class _BadgesPageState extends State<BadgesPage> {
                 SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Badge tiers are awarded based on minimum level thresholds. Each tier lists 5 tasks '
-                    'a user must complete to earn it. The highest tier a user qualifies for is shown on their profile.',
+                    'Badges you create here appear live in the VoiceMate app. Each tier lists 5 tasks; '
+                    'a user earns the badge when they complete all 5 and reach the minimum level. '
+                    'Every completed task adds +1 to the user\'s level.',
                     style: TextStyle(color: kAccent, fontSize: 12),
                   ),
                 ),
@@ -2076,7 +2087,7 @@ class _BadgesPageState extends State<BadgesPage> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Shows current badge assignment based on active tiers.',
+                  'Shows the badge each user has actually earned in the app.',
                   style: TextStyle(color: kSlate, fontSize: 12),
                 ),
                 const SizedBox(height: 16),
@@ -2090,31 +2101,29 @@ class _BadgesPageState extends State<BadgesPage> {
                     spacing: 8,
                     runSpacing: 8,
                     children: sampleUsers.map((u) {
-                      final tier = _getBadgeTierFor(u.level);
+                      final color = _userBadgeColor(u);
                       return Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: tier.color.withOpacity(0.08),
+                          color: color.withOpacity(0.08),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: tier.color.withOpacity(0.3),
-                          ),
+                          border: Border.all(color: color.withOpacity(0.3)),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              tier.emoji,
+                              _userBadgeEmoji(u),
                               style: const TextStyle(fontSize: 13),
                             ),
                             const SizedBox(width: 5),
                             Text(
                               u.name.split(' ').first,
                               style: TextStyle(
-                                color: tier.color,
+                                color: color,
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -2123,7 +2132,7 @@ class _BadgesPageState extends State<BadgesPage> {
                             Text(
                               'Lv.${u.level}',
                               style: TextStyle(
-                                color: tier.color.withOpacity(0.7),
+                                color: color.withOpacity(0.7),
                                 fontSize: 11,
                               ),
                             ),
@@ -2157,10 +2166,8 @@ class _BadgeCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Count how many Firestore users currently hold this tier.
-    final holders = sampleUsers
-        .where((u) => _getBadgeTierFor(u.level).id == tier.id)
-        .length;
+    // Users who have actually earned this tier in the app.
+    final holders = sampleUsers.where((u) => u.badgeId == tier.id).length;
     final filledTasks = tier.tasks.where((t) => t.trim().isNotEmpty).length;
 
     return Container(
@@ -2182,7 +2189,6 @@ class _BadgeCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              // Color dot + emoji
               Container(
                 width: 46,
                 height: 46,
@@ -2210,13 +2216,12 @@ class _BadgeCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Min Level ${tier.minLevel}  ·  $holders user${holders == 1 ? '' : 's'}',
+                      'Min Level ${tier.minLevel}  ·  $holders earned',
                       style: const TextStyle(color: kSlate, fontSize: 11),
                     ),
                   ],
                 ),
               ),
-              // Tier rank chip
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
@@ -2249,7 +2254,6 @@ class _BadgeCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          // Tasks summary row (tap to view full list)
           InkWell(
             onTap: onTasks,
             borderRadius: BorderRadius.circular(10),
@@ -2466,7 +2470,7 @@ class _LeaderboardList extends StatelessWidget {
       itemBuilder: (ctx, i) {
         final u = users[i];
         final value = metric == 'level' ? u.level : u.streak;
-        final badgeColor = _getBadgeColor(u.level);
+        final badgeColor = _userBadgeColor(u);
 
         Color rankColor = kSlate;
         if (i == 0) rankColor = kAmber;
@@ -2532,7 +2536,7 @@ class _LeaderboardList extends StatelessWidget {
                   border: Border.all(color: badgeColor.withOpacity(0.4)),
                 ),
                 child: Text(
-                  '${_getBadgeEmoji(u.level)} ${_getBadgeLabel(u.level)}',
+                  '${_userBadgeEmoji(u)} ${_userBadgeLabel(u)}',
                   style: TextStyle(
                     color: badgeColor,
                     fontSize: 11,
@@ -2874,10 +2878,13 @@ class AnalyticsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 800;
 
+    // Badge distribution from badges users have really earned
     final Map<String, int> badgeDist = {};
+    final Map<String, String> badgeEmojiByLabel = {};
     for (final u in sampleUsers) {
-      final label = _getBadgeLabel(u.level);
+      final label = _userBadgeLabel(u);
       badgeDist[label] = (badgeDist[label] ?? 0) + 1;
+      badgeEmojiByLabel[label] = _userBadgeEmoji(u);
     }
 
     final avgLevel = sampleUsers.isEmpty
@@ -2958,9 +2965,14 @@ class AnalyticsPage extends StatelessWidget {
                   title: 'Badge Distribution',
                 ),
                 const SizedBox(height: 16),
+                if (badgeDist.isEmpty)
+                  const Text(
+                    'No users yet.',
+                    style: TextStyle(color: kSlate, fontSize: 13),
+                  ),
                 for (final entry in badgeDist.entries) ...[
                   _ProgressBar(
-                    label: '${_getBadgeEmoji(entry.value * 5)} ${entry.key}',
+                    label: '${badgeEmojiByLabel[entry.key] ?? '🏅'} ${entry.key}',
                     count: entry.value,
                     total: stats.total,
                     color: kAccent,
@@ -3377,7 +3389,7 @@ class _UserSummaryTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final badgeColor = _getBadgeColor(user.level);
+    final badgeColor = _userBadgeColor(user);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 7),
       child: Row(
@@ -3421,7 +3433,7 @@ class _UserSummaryTile extends StatelessWidget {
               border: Border.all(color: badgeColor.withOpacity(0.3)),
             ),
             child: Text(
-              '${_getBadgeEmoji(user.level)} Lv.${user.level}',
+              '${_userBadgeEmoji(user)} Lv.${user.level}',
               style: TextStyle(
                 color: badgeColor,
                 fontSize: 11,
