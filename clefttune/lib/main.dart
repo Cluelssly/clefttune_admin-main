@@ -1410,11 +1410,11 @@ class _UserRowReadOnly extends StatelessWidget {
 class BadgesPage extends StatefulWidget {
   final VoidCallback? onChanged;
   const BadgesPage({super.key, this.onChanged});
-
+ 
   @override
   State<BadgesPage> createState() => _BadgesPageState();
 }
-
+ 
 class _BadgesPageState extends State<BadgesPage> {
   // Preset color swatches for the color picker
   static const _colorSwatches = [
@@ -1431,29 +1431,57 @@ class _BadgesPageState extends State<BadgesPage> {
     Color(0xFFDB2777),
     Color(0xFF0F766E),
   ];
-
+ 
+  // Default tasks for a brand-new badge (admin can change all of them)
+  static const _defaultTasks = <BadgeTask>[
+    BadgeTask(type: BadgeTaskType.streak, target: 3),
+    BadgeTask(type: BadgeTaskType.newWord, target: 5),
+    BadgeTask(type: BadgeTaskType.trainingSession, target: 3),
+    BadgeTask(type: BadgeTaskType.phonemeDrill, target: 3, minScore: 70),
+    BadgeTask(type: BadgeTaskType.streak, target: 7),
+  ];
+ 
+  /// Loads the structured tasks of an existing badge from Firestore.
+  Future<List<BadgeTask>> _loadTaskDefs(String badgeId) async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('badges')
+          .doc(badgeId)
+          .get();
+      final raw = (snap.data()?['task_defs'] as List?) ?? const [];
+      final defs = raw
+          .map((e) => BadgeTask.fromMap(Map<String, dynamic>.from(e as Map)))
+          .toList();
+      if (defs.length == 5) return defs;
+    } catch (_) {}
+    return List<BadgeTask>.from(_defaultTasks);
+  }
+ 
   // ── CREATE / EDIT dialog ──────────────────────────────────────
-  void _openBadgeForm({BadgeTier? existing}) {
+  Future<void> _openBadgeForm({BadgeTier? existing}) async {
     final isEdit = existing != null;
-
+ 
+    final taskDefs = isEdit
+        ? await _loadTaskDefs(existing.id)
+        : List<BadgeTask>.from(_defaultTasks);
+    if (!mounted) return;
+ 
     final emojiCtrl = TextEditingController(text: existing?.emoji ?? '🏅');
     final labelCtrl = TextEditingController(text: existing?.label ?? '');
     final levelCtrl = TextEditingController(
       text: existing?.minLevel.toString() ?? '0',
     );
     Color selectedColor = existing?.color ?? kAccent;
-
-    // Exactly 5 task fields
-    final existingTasks = existing?.tasks ?? <String>[];
-    final taskCtrls = List<TextEditingController>.generate(
-      5,
-      (i) => TextEditingController(
-        text: i < existingTasks.length ? existingTasks[i] : '',
-      ),
-    );
-
+ 
+    // Exactly 5 structured task rows
+    final taskTypes = taskDefs.map((t) => t.type).toList();
+    final targetCtrls = taskDefs
+        .map((t) => TextEditingController(text: t.target.toString()))
+        .toList();
+    final minScores = taskDefs.map((t) => t.minScore).toList();
+ 
     final formKey = GlobalKey<FormState>();
-
+ 
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -1489,7 +1517,7 @@ class _BadgesPageState extends State<BadgesPage> {
             ],
           ),
           content: SizedBox(
-            width: 380,
+            width: 400,
             child: Form(
               key: formKey,
               child: SingleChildScrollView(
@@ -1498,7 +1526,7 @@ class _BadgesPageState extends State<BadgesPage> {
                   children: [
                     const Divider(color: kBorder),
                     const SizedBox(height: 12),
-
+ 
                     // Live preview
                     Center(
                       child: Container(
@@ -1524,7 +1552,7 @@ class _BadgesPageState extends State<BadgesPage> {
                       ),
                     ),
                     const SizedBox(height: 16),
-
+ 
                     // Emoji + Label row
                     Row(
                       children: [
@@ -1551,7 +1579,7 @@ class _BadgesPageState extends State<BadgesPage> {
                         ),
                       ],
                     ),
-
+ 
                     // Min level
                     _BadgeFormField(
                       ctrl: levelCtrl,
@@ -1560,12 +1588,13 @@ class _BadgesPageState extends State<BadgesPage> {
                       keyboardType: TextInputType.number,
                       validator: (v) {
                         final n = int.tryParse(v ?? '');
-                        if (n == null || n < 0)
+                        if (n == null || n < 0) {
                           return 'Enter a valid level (≥ 0)';
+                        }
                         return null;
                       },
                     ),
-
+ 
                     // Color picker
                     Align(
                       alignment: Alignment.centerLeft,
@@ -1621,12 +1650,12 @@ class _BadgesPageState extends State<BadgesPage> {
                       }).toList(),
                     ),
                     const SizedBox(height: 20),
-
-                    // Tasks to reach this badge (exactly 5)
+ 
+                    // Auto-checked tasks (exactly 5)
                     Align(
                       alignment: Alignment.centerLeft,
                       child: Text(
-                        'Tasks to Reach This Badge (5)',
+                        'Auto-Checked Tasks (5)',
                         style: const TextStyle(
                           color: kSlate,
                           fontSize: 11,
@@ -1635,81 +1664,154 @@ class _BadgesPageState extends State<BadgesPage> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 4),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'The app checks these automatically as users '
+                        'keep a streak, add words, finish training and '
+                        'score on phoneme drills.',
+                        style: TextStyle(color: kSlate, fontSize: 11),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     for (int i = 0; i < 5; i++)
                       Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              width: 22,
-                              height: 22,
-                              alignment: Alignment.center,
-                              decoration: BoxDecoration(
-                                color: selectedColor.withOpacity(0.12),
-                                shape: BoxShape.circle,
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 22,
+                                  height: 22,
+                                  margin: const EdgeInsets.only(top: 10),
+                                  alignment: Alignment.center,
+                                  decoration: BoxDecoration(
+                                    color: selectedColor.withOpacity(0.12),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Text(
+                                    '${i + 1}',
+                                    style: TextStyle(
+                                      color: selectedColor,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: DropdownButtonFormField<BadgeTaskType>(
+                                    value: taskTypes[i],
+                                    isExpanded: true,
+                                    isDense: true,
+                                    dropdownColor: kSurface,
+                                    style: const TextStyle(
+                                      color: kText,
+                                      fontSize: 13,
+                                    ),
+                                    decoration: _taskDecoration(),
+                                    items: BadgeTaskType.values
+                                        .map(
+                                          (t) => DropdownMenuItem(
+                                            value: t,
+                                            child: Text(
+                                              t.label,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
+                                    onChanged: (v) {
+                                      if (v == null) return;
+                                      setInner(() => taskTypes[i] = v);
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                SizedBox(
+                                  width: 78,
+                                  child: TextFormField(
+                                    controller: targetCtrls[i],
+                                    keyboardType: TextInputType.number,
+                                    onChanged: (_) => setInner(() {}),
+                                    style: const TextStyle(
+                                      color: kText,
+                                      fontSize: 13,
+                                    ),
+                                    validator: (v) {
+                                      final n = int.tryParse(v ?? '');
+                                      return (n == null || n < 1)
+                                          ? '≥ 1'
+                                          : null;
+                                    },
+                                    decoration: _taskDecoration(
+                                      hint: taskTypes[i].targetHint,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (taskTypes[i] == BadgeTaskType.phonemeDrill)
+                              Padding(
+                                padding: const EdgeInsets.only(
+                                  left: 32,
+                                  top: 8,
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Text(
+                                      'Minimum score per drill',
+                                      style: TextStyle(
+                                        color: kSlate,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    SizedBox(
+                                      width: 90,
+                                      child: DropdownButtonFormField<int>(
+                                        value: minScores[i],
+                                        isDense: true,
+                                        dropdownColor: kSurface,
+                                        style: const TextStyle(
+                                          color: kText,
+                                          fontSize: 13,
+                                        ),
+                                        decoration: _taskDecoration(),
+                                        items: kPhonemeThresholds
+                                            .map(
+                                              (s) => DropdownMenuItem(
+                                                value: s,
+                                                child: Text('$s%'),
+                                              ),
+                                            )
+                                            .toList(),
+                                        onChanged: (v) {
+                                          if (v == null) return;
+                                          setInner(() => minScores[i] = v);
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
+                            Padding(
+                              padding: const EdgeInsets.only(left: 32, top: 6),
                               child: Text(
-                                '${i + 1}',
+                                BadgeTask(
+                                  type: taskTypes[i],
+                                  target:
+                                      int.tryParse(targetCtrls[i].text) ?? 1,
+                                  minScore: minScores[i],
+                                ).title,
                                 style: TextStyle(
                                   color: selectedColor,
                                   fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: TextFormField(
-                                controller: taskCtrls[i],
-                                style: const TextStyle(
-                                  color: kText,
-                                  fontSize: 13,
-                                ),
-                                validator: (v) => v == null || v.trim().isEmpty
-                                    ? 'Task ${i + 1} is required'
-                                    : null,
-                                decoration: InputDecoration(
-                                  hintText: 'Task ${i + 1}',
-                                  hintStyle: const TextStyle(color: kBorder),
-                                  isDense: true,
-                                  filled: true,
-                                  fillColor: kBg,
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 10,
-                                  ),
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: const BorderSide(
-                                      color: kBorder,
-                                    ),
-                                  ),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: const BorderSide(
-                                      color: kBorder,
-                                    ),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: const BorderSide(
-                                      color: kAccent,
-                                      width: 1.5,
-                                    ),
-                                  ),
-                                  errorBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: const BorderSide(color: kRose),
-                                  ),
-                                  focusedErrorBorder: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                    borderSide: const BorderSide(
-                                      color: kRose,
-                                      width: 1.5,
-                                    ),
-                                  ),
+                                  fontWeight: FontWeight.w600,
                                 ),
                               ),
                             ),
@@ -1741,7 +1843,16 @@ class _BadgesPageState extends State<BadgesPage> {
               label: Text(isEdit ? 'Save Changes' : 'Create Badge'),
               onPressed: () async {
                 if (!formKey.currentState!.validate()) return;
-                final tasks = taskCtrls.map((c) => c.text.trim()).toList();
+ 
+                final defs = List<BadgeTask>.generate(
+                  5,
+                  (i) => BadgeTask(
+                    type: taskTypes[i],
+                    target: int.tryParse(targetCtrls[i].text) ?? 1,
+                    minScore: minScores[i],
+                  ),
+                );
+                final tasks = defs.map((d) => d.title).toList();
                 final badgeId = isEdit ? existing.id : 'b${_nextBadgeId()}';
                 final badge = BadgeTier(
                   id: badgeId,
@@ -1751,7 +1862,7 @@ class _BadgesPageState extends State<BadgesPage> {
                   color: selectedColor,
                   tasks: tasks,
                 );
-
+ 
                 try {
                   final data = <String, dynamic>{
                     'badge_id': badge.id,
@@ -1761,7 +1872,9 @@ class _BadgesPageState extends State<BadgesPage> {
                     'emoji': badge.emoji,
                     'min_level': badge.minLevel,
                     'color': badge.color.value,
-                    'tasks': badge.tasks,
+                    'tasks': badge.tasks, // human-readable titles
+                    // Machine-checkable rules checked automatically by the user app
+                    'task_defs': defs.map((d) => d.toMap()).toList(),
                   };
                   if (!isEdit) {
                     data['created_at'] = FieldValue.serverTimestamp();
@@ -1778,10 +1891,10 @@ class _BadgesPageState extends State<BadgesPage> {
                   }
                   return;
                 }
-
+ 
                 // The live badges stream in AdminShell updates the list.
                 widget.onChanged?.call();
-                Navigator.pop(ctx);
+                if (ctx.mounted) Navigator.pop(ctx);
               },
             ),
           ],
@@ -1789,7 +1902,36 @@ class _BadgesPageState extends State<BadgesPage> {
       ),
     );
   }
-
+ 
+  InputDecoration _taskDecoration({String? hint}) => InputDecoration(
+    hintText: hint,
+    hintStyle: const TextStyle(color: kBorder, fontSize: 12),
+    isDense: true,
+    filled: true,
+    fillColor: kBg,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: kBorder),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: kBorder),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: kAccent, width: 1.5),
+    ),
+    errorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: kRose),
+    ),
+    focusedErrorBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: kRose, width: 1.5),
+    ),
+  );
+ 
   // ── VIEW tasks dialog ─────────────────────────────────────────
   void _showTasks(BadgeTier badge) {
     showDialog(
@@ -1831,7 +1973,8 @@ class _BadgesPageState extends State<BadgesPage> {
               const Divider(color: kBorder),
               const SizedBox(height: 8),
               Text(
-                'Users must complete these 5 tasks in the VoiceMate app to earn the ${badge.label} badge (min. level ${badge.minLevel}):',
+                'These 5 tasks are checked automatically in the VoiceMate app. '
+                'Completing all of them at level ${badge.minLevel}+ earns the ${badge.label} badge:',
                 style: const TextStyle(color: kSlate, fontSize: 12),
               ),
               const SizedBox(height: 12),
@@ -1885,7 +2028,7 @@ class _BadgesPageState extends State<BadgesPage> {
       ),
     );
   }
-
+ 
   // ── DELETE confirm ────────────────────────────────────────────
   void _confirmDelete(BadgeTier badge) {
     showDialog(
@@ -1956,20 +2099,20 @@ class _BadgesPageState extends State<BadgesPage> {
                 return;
               }
               widget.onChanged?.call();
-              Navigator.pop(ctx);
+              if (ctx.mounted) Navigator.pop(ctx);
             },
           ),
         ],
       ),
     );
   }
-
+ 
   @override
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width < 800;
     final sorted = [...badgeTiers]
       ..sort((a, b) => a.minLevel.compareTo(b.minLevel));
-
+ 
     return SingleChildScrollView(
       padding: EdgeInsets.fromLTRB(
         isMobile ? 16 : 28,
@@ -2011,7 +2154,7 @@ class _BadgesPageState extends State<BadgesPage> {
             ],
           ),
           const SizedBox(height: 8),
-
+ 
           // Info banner
           Container(
             width: double.infinity,
@@ -2028,16 +2171,17 @@ class _BadgesPageState extends State<BadgesPage> {
                 SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Badges you create here appear live in the VoiceMate app. Each tier lists 5 tasks; '
-                    'a user earns the badge when they complete all 5 and reach the minimum level. '
-                    'Every completed task adds +1 to the user\'s level.',
+                    'Badges you create here appear live in the VoiceMate app. Each tier has 5 '
+                    'tasks (streak, new words, training sessions, phoneme drill scores) that are '
+                    'checked automatically. A user earns the badge when all 5 are done and they '
+                    'reach the minimum level. Every completed task adds +1 to the user\'s level.',
                     style: TextStyle(color: kAccent, fontSize: 12),
                   ),
                 ),
               ],
             ),
           ),
-
+ 
           // Badge cards grid
           LayoutBuilder(
             builder: (ctx, constraints) {
@@ -2073,9 +2217,9 @@ class _BadgesPageState extends State<BadgesPage> {
               );
             },
           ),
-
+ 
           const SizedBox(height: 20),
-
+ 
           // Preview: which badge each Firestore user holds
           _Card(
             child: Column(
@@ -2149,7 +2293,7 @@ class _BadgesPageState extends State<BadgesPage> {
     );
   }
 }
-
+ 
 class _BadgeCard extends StatelessWidget {
   final BadgeTier tier;
   final int rank;
@@ -2163,13 +2307,13 @@ class _BadgeCard extends StatelessWidget {
     required this.onDelete,
     required this.onTasks,
   });
-
+ 
   @override
   Widget build(BuildContext context) {
     // Users who have actually earned this tier in the app.
     final holders = sampleUsers.where((u) => u.badgeId == tier.id).length;
     final filledTasks = tier.tasks.where((t) => t.trim().isNotEmpty).length;
-
+ 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
@@ -2271,7 +2415,7 @@ class _BadgeCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '$filledTasks/5 tasks set to earn this badge',
+                      '$filledTasks/5 auto-checked tasks to earn this badge',
                       style: TextStyle(
                         color: tier.color,
                         fontSize: 11,
@@ -2294,7 +2438,7 @@ class _BadgeCard extends StatelessWidget {
     );
   }
 }
-
+ 
 // ── Badge form field (inline) ──────────────────────────────────────
 class _BadgeFormField extends StatelessWidget {
   final TextEditingController ctrl;
@@ -2302,7 +2446,7 @@ class _BadgeFormField extends StatelessWidget {
   final TextInputType keyboardType;
   final String? Function(String?)? validator;
   final ValueChanged<String>? onChanged;
-
+ 
   const _BadgeFormField({
     required this.ctrl,
     required this.label,
@@ -2311,7 +2455,7 @@ class _BadgeFormField extends StatelessWidget {
     this.validator,
     this.onChanged,
   });
-
+ 
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 14),
@@ -2369,6 +2513,86 @@ class _BadgeFormField extends StatelessWidget {
     ),
   );
 }
+ 
+// ── Auto-check task model (admin side: only defines the rules) ─────
+// The user app evaluates these rules; this app only creates/edits them.
+ 
+/// Score thresholds the admin can pick for phoneme drill tasks.
+const List<int> kPhonemeThresholds = [50, 60, 70, 80, 90, 100];
+ 
+enum BadgeTaskType { streak, newWord, trainingSession, phonemeDrill }
+ 
+extension BadgeTaskTypeX on BadgeTaskType {
+  String get label {
+    switch (this) {
+      case BadgeTaskType.streak:
+        return 'Maintain a streak';
+      case BadgeTaskType.newWord:
+        return 'Add new words';
+      case BadgeTaskType.trainingSession:
+        return 'Complete training sessions';
+      case BadgeTaskType.phonemeDrill:
+        return 'Score % on phoneme drills';
+    }
+  }
+ 
+  String get targetHint {
+    switch (this) {
+      case BadgeTaskType.streak:
+        return 'Days';
+      case BadgeTaskType.newWord:
+        return 'Words';
+      case BadgeTaskType.trainingSession:
+        return 'Sessions';
+      case BadgeTaskType.phonemeDrill:
+        return 'Drills';
+    }
+  }
+ 
+  static BadgeTaskType parse(String? s) => BadgeTaskType.values.firstWhere(
+    (t) => t.name == s,
+    orElse: () => BadgeTaskType.newWord,
+  );
+}
+ 
+class BadgeTask {
+  final BadgeTaskType type;
+  final int target;
+  final int minScore; // only used by phonemeDrill
+ 
+  const BadgeTask({
+    required this.type,
+    required this.target,
+    this.minScore = 70,
+  });
+ 
+  String get title {
+    switch (type) {
+      case BadgeTaskType.streak:
+        return 'Maintain a $target-day streak';
+      case BadgeTaskType.newWord:
+        return 'Add $target new word${target == 1 ? '' : 's'}';
+      case BadgeTaskType.trainingSession:
+        return 'Complete $target training session${target == 1 ? '' : 's'}';
+      case BadgeTaskType.phonemeDrill:
+        return 'Score $minScore%+ on $target phoneme drill${target == 1 ? '' : 's'}';
+    }
+  }
+ 
+  Map<String, dynamic> toMap() => {
+    'type': type.name,
+    'target': target,
+    'min_score': minScore,
+    'title': title,
+  };
+ 
+  factory BadgeTask.fromMap(Map<String, dynamic> m) => BadgeTask(
+    type: BadgeTaskTypeX.parse(m['type'] as String?),
+    target: (m['target'] as num?)?.toInt() ?? 1,
+    minScore: (m['min_score'] as num?)?.toInt() ?? 70,
+  );
+}
+ 
 
 // ═══════════════════════════════════════════════════════════════════
 // PAGE: LEADERBOARD
