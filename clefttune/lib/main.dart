@@ -1040,7 +1040,62 @@ class DashboardPage extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// PAGE: MANAGE USERS  (READ-ONLY — no edit / delete)
+// ADMIN DELETE — removes a user's data from Firestore
+// ═══════════════════════════════════════════════════════════════════
+
+/// Sub-collections stored under users/{uid}. Firestore does NOT delete these
+/// automatically when the user document is deleted, so each one is cleared
+/// here. If your app stores more sub-collections under a user, add the names.
+const _userSubcollections = <String>[
+  'notifications',
+  'records',
+  'badgeRecords',
+  'corrections',
+];
+
+/// Deletes every document a query returns, in batches of 400.
+Future<void> _deleteAllIn(Query<Map<String, dynamic>> query) async {
+  while (true) {
+    final snap = await query.limit(400).get();
+    if (snap.docs.isEmpty) return;
+    final batch = FirebaseFirestore.instance.batch();
+    for (final d in snap.docs) {
+      batch.delete(d.reference);
+    }
+    await batch.commit();
+    if (snap.docs.length < 400) return;
+  }
+}
+
+/// Completely removes a user's data from Firestore.
+Future<void> _deleteUserEverywhere(String uid) async {
+  final db = FirebaseFirestore.instance;
+  final userRef = db.collection('users').doc(uid);
+
+  // 1) sub-collections first (they are not removed with the parent document)
+  for (final name in _userSubcollections) {
+    await _deleteAllIn(userRef.collection(name));
+  }
+
+  // 2) the user's own records stored in top-level collections
+  await _deleteAllIn(
+    db.collection('translations').where('userId', isEqualTo: uid),
+  );
+  await _deleteAllIn(
+    db.collection('feedback').where('userId', isEqualTo: uid),
+  );
+  await db.collection('feedback').doc(uid).delete(); // older feedback keyed by uid
+  await db.collection('progress').doc(uid).delete();
+  await _deleteAllIn(
+    db.collection('training_sessions').where('user_id', isEqualTo: uid),
+  );
+
+  // 3) finally the user document itself
+  await userRef.delete();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// PAGE: MANAGE USERS  (view + delete)
 // ═══════════════════════════════════════════════════════════════════
 class UsersPage extends StatefulWidget {
   const UsersPage({super.key});
@@ -1051,6 +1106,83 @@ class UsersPage extends StatefulWidget {
 
 class _UsersPageState extends State<UsersPage> {
   String _search = '';
+
+  // ── DELETE account (Firestore data) ───────────────────────────
+  Future<void> _confirmDeleteUser(SampleUser user) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.warning_amber_rounded, color: kRose, size: 22),
+            SizedBox(width: 8),
+            Text(
+              'Delete account?',
+              style: TextStyle(
+                color: kText,
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          'This permanently deletes ${user.name} (${user.email}) and all of '
+          'their data from Firestore: profile, progress, badges, '
+          'notifications, translations and feedback.\n\n'
+          'This cannot be undone.',
+          style: const TextStyle(color: kSlate, fontSize: 13, height: 1.5),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: kSlate)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kRose,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    // Loading indicator while the data is being removed.
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    String? error;
+    try {
+      await _deleteUserEverywhere(user.id);
+    } catch (e) {
+      error = e.toString();
+    }
+
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop(); // close the loader
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: error == null ? kEmerald : kRose,
+        content: Text(
+          error == null
+              ? '${user.name} was deleted from Firestore.'
+              : 'Could not delete ${user.name}: $error',
+        ),
+      ),
+    );
+  }
 
   // ── VIEW detail dialog ────────────────────────────────────────
   void showUserDetail(SampleUser user) {
@@ -1124,7 +1256,7 @@ class _UsersPageState extends State<UsersPage> {
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'User profiles are read-only. Changes are managed by users.',
+                        'Profiles are edited by users. Deleting removes all of their data.',
                         style: TextStyle(color: kAmber, fontSize: 11),
                       ),
                     ),
@@ -1135,6 +1267,14 @@ class _UsersPageState extends State<UsersPage> {
           ),
         ),
         actions: [
+          TextButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _confirmDeleteUser(user);
+            },
+            icon: const Icon(Icons.delete_outline_rounded, color: kRose, size: 18),
+            label: const Text('Delete', style: TextStyle(color: kRose)),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Close', style: TextStyle(color: kSlate)),
@@ -1170,7 +1310,7 @@ class _UsersPageState extends State<UsersPage> {
               Expanded(
                 child: _PageHeader(
                   title: 'Manage Users',
-                  subtitle: '${sampleUsers.length} registered · read-only',
+                  subtitle: '${sampleUsers.length} registered',
                 ),
               ),
               Container(
@@ -1186,10 +1326,10 @@ class _UsersPageState extends State<UsersPage> {
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.lock_outline_rounded, color: kSlate, size: 14),
+                    Icon(Icons.manage_accounts_rounded, color: kSlate, size: 14),
                     SizedBox(width: 6),
                     Text(
-                      'Read-Only',
+                      'View & Delete',
                       style: TextStyle(
                         color: kSlate,
                         fontSize: 12,
@@ -1256,7 +1396,7 @@ class _UsersPageState extends State<UsersPage> {
                             Expanded(child: _ColHeader('LEVEL')),
                             Expanded(child: _ColHeader('STREAK')),
                             Expanded(child: _ColHeader('RATING')),
-                            SizedBox(width: 40),
+                            SizedBox(width: 72),
                           ],
                         ),
                       ),
@@ -1265,6 +1405,7 @@ class _UsersPageState extends State<UsersPage> {
                         _UserRowReadOnly(
                           user: filtered[i],
                           onView: () => showUserDetail(filtered[i]),
+                          onDelete: () => _confirmDeleteUser(filtered[i]),
                         ),
                       ],
                     ],
@@ -1280,8 +1421,13 @@ class _UsersPageState extends State<UsersPage> {
 class _UserRowReadOnly extends StatelessWidget {
   final SampleUser user;
   final VoidCallback onView;
+  final VoidCallback onDelete;
 
-  const _UserRowReadOnly({required this.user, required this.onView});
+  const _UserRowReadOnly({
+    required this.user,
+    required this.onView,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1394,6 +1540,13 @@ class _UserRowReadOnly extends StatelessWidget {
               color: kAccent,
               tooltip: 'View',
               onTap: onView,
+            ),
+            const SizedBox(width: 8),
+            _IconBtn(
+              icon: Icons.delete_outline_rounded,
+              color: kRose,
+              tooltip: 'Delete account',
+              onTap: onDelete,
             ),
           ],
         ),
