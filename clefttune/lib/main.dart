@@ -561,6 +561,14 @@ class _AdminShellState extends State<AdminShell> {
                     onTap: () => _scaffoldKey.currentState?.openDrawer(),
                   ),
                 ),
+              // On phones the sidebar is hidden in a drawer, so keep the
+              // notification bell reachable at the top-right.
+              if (isMobile)
+                const Positioned(
+                  top: 12,
+                  right: 12,
+                  child: NotificationBell(),
+                ),
             ],
           ),
         ),
@@ -899,25 +907,27 @@ class DashboardPage extends StatelessWidget {
         children: [
           Row(
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Good morning 👋',
-                    style: TextStyle(color: kSlate, fontSize: 13),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Dashboard Overview',
-                    style: TextStyle(
-                      color: kText,
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Good morning 👋',
+                      style: TextStyle(color: kSlate, fontSize: 13),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 4),
+                    Text(
+                      'Dashboard Overview',
+                      style: TextStyle(
+                        color: kText,
+                        fontSize: isMobile ? 22 : 26,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const Spacer(),
+              if (!isMobile)
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -961,7 +971,11 @@ class DashboardPage extends StatelessWidget {
                 physics: const NeverScrollableScrollPhysics(),
                 crossAxisSpacing: 12,
                 mainAxisSpacing: 12,
-                childAspectRatio: constraints.maxWidth > 600 ? 1.5 : 1.7,
+                childAspectRatio: constraints.maxWidth > 900
+                    ? 1.5
+                    : constraints.maxWidth > 600
+                    ? 1.7
+                    : 1.25,
                 children: [
                   _DashCard(
                     title: 'Total Users',
@@ -1313,6 +1327,7 @@ class _UsersPageState extends State<UsersPage> {
                   subtitle: '${sampleUsers.length} registered',
                 ),
               ),
+              if (!isMobile)
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -1382,6 +1397,7 @@ class _UsersPageState extends State<UsersPage> {
                   )
                 : Column(
                     children: [
+                      if (!isMobile)
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 16,
@@ -1402,16 +1418,159 @@ class _UsersPageState extends State<UsersPage> {
                       ),
                       for (int i = 0; i < filtered.length; i++) ...[
                         if (i != 0) const Divider(color: kBorder, height: 1),
-                        _UserRowReadOnly(
-                          user: filtered[i],
-                          onView: () => showUserDetail(filtered[i]),
-                          onDelete: () => _confirmDeleteUser(filtered[i]),
-                        ),
+                        isMobile
+                            ? _UserRowCompact(
+                                user: filtered[i],
+                                onView: () => showUserDetail(filtered[i]),
+                                onDelete: () => _confirmDeleteUser(filtered[i]),
+                              )
+                            : _UserRowReadOnly(
+                                user: filtered[i],
+                                onView: () => showUserDetail(filtered[i]),
+                                onDelete: () => _confirmDeleteUser(filtered[i]),
+                              ),
                       ],
                     ],
                   ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ── Compact user row for phones ────────────────────────────────────
+class _UserRowCompact extends StatelessWidget {
+  final SampleUser user;
+  final VoidCallback onView;
+  final VoidCallback onDelete;
+
+  const _UserRowCompact({
+    required this.user,
+    required this.onView,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final badgeColor = _userBadgeColor(user);
+
+    return InkWell(
+      onTap: onView,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: kAccent.withOpacity(0.1),
+              child: Text(
+                user.name[0].toUpperCase(),
+                style: const TextStyle(
+                  color: kAccent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    user.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: kText,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                  ),
+                  Text(
+                    user.email,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: kSlate, fontSize: 11),
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _userBadgeEmoji(user),
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            'Lv.${user.level}',
+                            style: TextStyle(
+                              color: badgeColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.local_fire_department_rounded,
+                            color: kRose,
+                            size: 14,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            '${user.streak}',
+                            style: const TextStyle(
+                              color: kText,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.star_rounded,
+                            color: kAmber,
+                            size: 14,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            user.rating.toStringAsFixed(1),
+                            style: const TextStyle(
+                              color: kText,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            _IconBtn(
+              icon: Icons.delete_outline_rounded,
+              color: kRose,
+              tooltip: 'Delete account',
+              onTap: onDelete,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1669,6 +1828,11 @@ class _BadgesPageState extends State<BadgesPage> {
               ),
             ],
           ),
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 24,
+          ),
+          contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           content: SizedBox(
             width: 400,
             child: Form(
@@ -1886,7 +2050,7 @@ class _BadgesPageState extends State<BadgesPage> {
                                 ),
                                 const SizedBox(width: 8),
                                 SizedBox(
-                                  width: 78,
+                                  width: 72,
                                   child: TextFormField(
                                     controller: targetCtrls[i],
                                     keyboardType: TextInputType.number,
@@ -2350,23 +2514,27 @@ class _BadgesPageState extends State<BadgesPage> {
                   ),
                 );
               }
-              return GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: cols,
-                  crossAxisSpacing: 14,
-                  mainAxisSpacing: 14,
-                  childAspectRatio: 2.1,
-                ),
-                itemCount: sorted.length,
-                itemBuilder: (ctx, i) => _BadgeCard(
-                  tier: sorted[i],
-                  rank: i + 1,
-                  onEdit: () => _openBadgeForm(existing: sorted[i]),
-                  onDelete: () => _confirmDelete(sorted[i]),
-                  onTasks: () => _showTasks(sorted[i]),
-                ),
+              // Cards size themselves to their content, so nothing is
+              // clipped or overflows on narrow phone screens.
+              final itemWidth = cols == 1
+                  ? constraints.maxWidth
+                  : (constraints.maxWidth - 14) / 2;
+              return Wrap(
+                spacing: 14,
+                runSpacing: 14,
+                children: [
+                  for (int i = 0; i < sorted.length; i++)
+                    SizedBox(
+                      width: itemWidth,
+                      child: _BadgeCard(
+                        tier: sorted[i],
+                        rank: i + 1,
+                        onEdit: () => _openBadgeForm(existing: sorted[i]),
+                        onDelete: () => _confirmDelete(sorted[i]),
+                        onTasks: () => _showTasks(sorted[i]),
+                      ),
+                    ),
+                ],
               );
             },
           ),
@@ -2482,6 +2650,7 @@ class _BadgeCard extends StatelessWidget {
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
@@ -2497,7 +2666,7 @@ class _BadgeCard extends StatelessWidget {
                   child: Text(tier.emoji, style: const TextStyle(fontSize: 22)),
                 ),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2505,6 +2674,8 @@ class _BadgeCard extends StatelessWidget {
                   children: [
                     Text(
                       tier.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: tier.color,
                         fontWeight: FontWeight.bold,
@@ -2513,28 +2684,15 @@ class _BadgeCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Min Level ${tier.minLevel}  ·  $holders earned',
+                      'Tier $rank  ·  Min Lv ${tier.minLevel}  ·  $holders earned',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: kSlate, fontSize: 11),
                     ),
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: tier.color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text(
-                  'Tier $rank',
-                  style: TextStyle(
-                    color: tier.color,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               _IconBtn(
                 icon: Icons.edit_rounded,
                 color: kEmerald,
@@ -2848,6 +3006,7 @@ class _LeaderboardList extends StatelessWidget {
         final u = users[i];
         final value = metric == 'level' ? u.level : u.streak;
         final badgeColor = _userBadgeColor(u);
+        final narrow = MediaQuery.of(ctx).size.width < 600;
 
         Color rankColor = kSlate;
         if (i == 0) rankColor = kAmber;
@@ -2894,14 +3053,24 @@ class _LeaderboardList extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    // On phones the badge goes under the name instead of a
+                    // separate chip, so the row never overflows.
                     Text(
-                      u.email,
+                      narrow
+                          ? '${_userBadgeEmoji(u)} ${_userBadgeLabel(u)}'
+                          : u.email,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: kSlate, fontSize: 11),
+                      style: TextStyle(
+                        color: narrow ? badgeColor : kSlate,
+                        fontSize: 11,
+                        fontWeight: narrow ? FontWeight.w600 : FontWeight.normal,
+                      ),
                     ),
                   ],
                 ),
               ),
+              if (!narrow)
               Container(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 10,
@@ -3011,8 +3180,8 @@ class _FeedbackPageState extends State<FeedbackPage> {
                   children: [
                     Text(
                       avgRating.toStringAsFixed(1),
-                      style: const TextStyle(
-                        fontSize: 52,
+                      style: TextStyle(
+                        fontSize: isMobile ? 38 : 52,
                         fontWeight: FontWeight.bold,
                         color: kText,
                       ),
@@ -3036,9 +3205,9 @@ class _FeedbackPageState extends State<FeedbackPage> {
                     ),
                   ],
                 ),
-                const SizedBox(width: 28),
+                SizedBox(width: isMobile ? 14 : 28),
                 const VerticalDivider(color: kBorder, width: 1),
-                const SizedBox(width: 20),
+                SizedBox(width: isMobile ? 10 : 20),
                 Expanded(
                   child: Column(
                     children: List.generate(5, (i) {
@@ -3191,6 +3360,8 @@ class _FeedbackTile extends StatelessWidget {
                 children: [
                   Text(
                     feedback.userName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: kText,
                       fontWeight: FontWeight.w600,
@@ -3199,27 +3370,37 @@ class _FeedbackTile extends StatelessWidget {
                   ),
                   Text(
                     feedback.userEmail,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: kSlate, fontSize: 11),
                   ),
                 ],
               ),
             ),
-            Row(
-              children: List.generate(
-                5,
-                (i) => Icon(
-                  i < feedback.rating
-                      ? Icons.star_rounded
-                      : Icons.star_outline_rounded,
-                  color: kAmber,
-                  size: 14,
-                ),
-              ),
-            ),
             const SizedBox(width: 8),
-            Text(
-              feedback.date,
-              style: const TextStyle(color: kSlate, fontSize: 11),
+            // Stars with the date underneath: saves horizontal space on phones.
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List.generate(
+                    5,
+                    (i) => Icon(
+                      i < feedback.rating
+                          ? Icons.star_rounded
+                          : Icons.star_outline_rounded,
+                      color: kAmber,
+                      size: 14,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  feedback.date,
+                  style: const TextStyle(color: kSlate, fontSize: 11),
+                ),
+              ],
             ),
           ],
         ),
@@ -3789,6 +3970,8 @@ class _UserSummaryTile extends StatelessWidget {
               children: [
                 Text(
                   user.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: kText,
                     fontWeight: FontWeight.w600,
@@ -3797,6 +3980,8 @@ class _UserSummaryTile extends StatelessWidget {
                 ),
                 Text(
                   user.email,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: kSlate, fontSize: 11),
                 ),
               ],
@@ -3865,6 +4050,8 @@ class _StreakTile extends StatelessWidget {
         Expanded(
           child: Text(
             user.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: kText, fontWeight: FontWeight.w600),
           ),
         ),

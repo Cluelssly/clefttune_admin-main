@@ -47,6 +47,31 @@ class NotificationHelper {
     );
   }
 
+  /// Call this from the USER app right after a feedback document is saved,
+  /// so the admin gets the notification even if the admin panel is closed.
+  /// [feedbackId] must be the id of the feedback document.
+  static Future<void> feedbackReceived({
+    required String feedbackId,
+    required String userId,
+    required String name,
+    required String email,
+    required int rating,
+    String comment = '',
+  }) {
+    final stars = '⭐' * rating.clamp(0, 5);
+    return _write(
+      id: 'fb_$feedbackId', // same id the admin panel uses → no duplicates
+      type: 'feedbackReceived',
+      userId: userId,
+      userName: name,
+      userEmail: email,
+      title: 'New feedback received $stars',
+      body: '$name left a $rating-star review.'
+          '${comment.isNotEmpty ? ' "$comment"' : ''}',
+      details: {'rating': rating},
+    );
+  }
+
   static Future<void> _write({
     required String id,
     required String type,

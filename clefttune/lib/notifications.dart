@@ -1,9 +1,11 @@
 // ═══════════════════════════════════════════════════════════════════
-// CLEFTTUNE ADMIN — notifications.dart  (White Theme v1)
+// CLEFTTUNE ADMIN — notifications.dart  (White Theme v2)
 //
 // Matches the clean white theme from main.dart.
-// Removed all premium/payment notification types.
-// The admin notification feed is limited to new users and earned badges.
+// The admin notification feed now listens to:
+//   • saved notifications (Firestore 'notifications')
+//   • users    (new user, deleted, profile updated, streaks)
+//   • feedback (new feedback received)
 // ═══════════════════════════════════════════════════════════════════
 
 import 'dart:async';
@@ -28,7 +30,7 @@ const _kText    = Color(0xFF0F172A);
 // FIRESTORE COLLECTION
 // ─────────────────────────────────────────────
 final _notifCol =
-  FirebaseFirestore.instance.collection('notifications');
+    FirebaseFirestore.instance.collection('notifications');
 
 int _getLevel(Map<String, dynamic> data) =>
     (data['level'] ?? data['userLevel'] ?? 0) as int;
@@ -87,32 +89,33 @@ class AdminNotification {
     DateTime time;
     try {
       time = ((data['createdAt'] ?? data['time']) as Timestamp).toDate();
+    } catch (_) {
+      time = DateTime.now();
     }
-    catch (_) { time = DateTime.now(); }
     return AdminNotification(
       id:     doc.id,
       type:   _typeFromString(data['type'] ?? 'newUser'),
-      title:  data['title']  ?? '',
-      body:   data['body']   ?? '',
+      title:  data['title'] ?? '',
+      body:   data['body']  ?? '',
       time:   time,
       isRead: data['read'] == true || data['isRead'] == true,
     );
   }
 
   Map<String, dynamic> toMap() => {
-    'type':    type.name,
-    'title':   title,
-    'body':    body,
-    'time':    Timestamp.fromDate(time),
-    'createdAt': Timestamp.fromDate(time),
-    'userId': '',
-    'userName': '',
-    'userEmail': '',
-    'details': <String, dynamic>{},
-    'isRead':  isRead,
-    'read':    isRead,
-    'savedAt': FieldValue.serverTimestamp(),
-  };
+        'type':      type.name,
+        'title':     title,
+        'body':      body,
+        'time':      Timestamp.fromDate(time),
+        'createdAt': Timestamp.fromDate(time),
+        'userId':    '',
+        'userName':  '',
+        'userEmail': '',
+        'details':   <String, dynamic>{},
+        'isRead':    isRead,
+        'read':      isRead,
+        'savedAt':   FieldValue.serverTimestamp(),
+      };
 
   Color get color {
     switch (type) {
@@ -147,7 +150,7 @@ class AdminNotification {
     if (diff.inHours   < 24) return '${diff.inHours}h ago';
     if (diff.inDays    <  7) return '${diff.inDays}d ago';
     return '${time.year}-${time.month.toString().padLeft(2, '0')}-'
-           '${time.day.toString().padLeft(2, '0')}';
+        '${time.day.toString().padLeft(2, '0')}';
   }
 }
 
@@ -167,9 +170,9 @@ class NotificationProvider extends StatefulWidget {
 }
 
 class _NotificationProviderState extends State<NotificationProvider> {
-  final List<AdminNotification>           _notifications  = [];
-  final Set<String>                       _seenIds        = {};
-  final Map<String, Map<String, dynamic>> _userSnapshots  = {};
+  final List<AdminNotification>           _notifications   = [];
+  final Set<String>                       _seenIds         = {};
+  final Map<String, Map<String, dynamic>> _userSnapshots   = {};
   final Set<String>                       _seenFeedbackIds = {};
 
   final _stream = StreamController<int>.broadcast();
@@ -186,14 +189,81 @@ class _NotificationProviderState extends State<NotificationProvider> {
   List<AdminNotification> get notifications => List.unmodifiable(_notifications);
   int get unreadCount => _notifications.where((n) => !n.isRead).length;
 
+  // ── PERSISTENCE / CATCH-UP ────────────────────────────────────────
+  // Every notification is saved in Firestore ('notifications'), so the
+  // history is still there after logout / app restart.
+  // 'admin_meta/notifications.lastSyncedAt' remembers when the admin panel
+  // last ran. On the next login, any user or feedback created AFTER that
+  // moment (i.e. while you were logged out) gets its notification created.
+  DocumentReference<Map<String, dynamic>> get _metaDoc =>
+      FirebaseFirestore.instance.collection('admin_meta').doc('notifications');
+
+  DateTime? _lastSync;
+  bool _syncSaved = false;
+  int  _initialLoadsDone = 0;
+  final Completer<void> _notifsReady = Completer<void>();
+
   @override
   void initState() {
     super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    // 1) when did the admin panel last run?
+    try {
+      final snap = await _metaDoc.get();
+      final ts = snap.data()?['lastSyncedAt'];
+      if (ts is Timestamp) _lastSync = ts.toDate();
+    } catch (e) {
+      debugPrint('[Notif] could not read sync marker: $e');
+    }
+    if (!mounted) return;
+
+    // 2) load the saved notifications first, so we know what already exists
     _notifSub = _listenNotifs();
+    await _notifsReady.future
+        .timeout(const Duration(seconds: 8), onTimeout: () {});
+    if (!mounted) return;
+
+    // 3) then watch users + feedback (these also catch up on missed events)
+    _userSub     = _listenUsers();
+    _feedbackSub = _listenFeedback();
+  }
+
+  /// True if something was created after the last time the admin panel ran.
+  bool _isMissed(DateTime? created) =>
+      _lastSync != null && created != null && created.isAfter(_lastSync!);
+
+  /// Called when users + feedback have both finished their first load.
+  void _initialLoadFinished() {
+    _initialLoadsDone++;
+    if (_initialLoadsDone >= 2) _saveSyncMarker();
+  }
+
+  void _saveSyncMarker() {
+    _syncSaved = true;
+    _metaDoc
+        .set({'lastSyncedAt': Timestamp.now()}, SetOptions(merge: true))
+        .catchError((e) => debugPrint('[Notif] sync marker error: $e'));
+  }
+
+  DateTime? _docTime(Map<String, dynamic> data, List<String> keys) {
+    for (final k in keys) {
+      final v = data[k];
+      if (v is Timestamp) return v.toDate();
+      if (v is DateTime) return v;
+      if (v is String) {
+        final p = DateTime.tryParse(v);
+        if (p != null) return p;
+      }
+    }
+    return null;
   }
 
   @override
   void dispose() {
+    if (_syncSaved) _saveSyncMarker(); // remember when we last ran
     _notifSub?.cancel();
     _userSub?.cancel();
     _feedbackSub?.cancel();
@@ -236,9 +306,11 @@ class _NotificationProviderState extends State<NotificationProvider> {
   }
 
   // ── 1. SAVED NOTIFICATIONS LISTENER ──────────────────────────────
+  // FIX #2: removed the whereIn filter. whereIn + orderBy needs a
+  // composite index (the stream silently errored without it) and it
+  // also hid feedback / streak / profile notifications.
   StreamSubscription _listenNotifs() {
     return _notifCol
-        .where('type', whereIn: const ['new_user', 'badge_earned'])
         .orderBy('createdAt', descending: true)
         .limit(100)
         .snapshots()
@@ -253,9 +325,9 @@ class _NotificationProviderState extends State<NotificationProvider> {
           } else if (change.type == DocumentChangeType.modified) {
             final idx = _notifications.indexWhere((n) => n.id == change.doc.id);
             if (idx != -1 && change.doc.data() != null) {
-                _notifications[idx].isRead =
+              _notifications[idx].isRead =
                   change.doc.data()!['read'] == true ||
-                  change.doc.data()!['isRead'] == true;
+                      change.doc.data()!['isRead'] == true;
               changed = true;
             }
           } else if (change.type == DocumentChangeType.added) {
@@ -271,17 +343,21 @@ class _NotificationProviderState extends State<NotificationProvider> {
           }
         }
         if (_initialNotifLoad) _initialNotifLoad = false;
+        if (!_notifsReady.isCompleted) _notifsReady.complete();
         if (changed) {
           _notifications.sort((a, b) => b.time.compareTo(a.time));
           if (_notifications.length > 100) {
             _notifications.removeRange(100, _notifications.length);
           }
-          setState(() {});
+          if (mounted) setState(() {});
           _notify();
         }
       },
       onError: (e, s) {
         debugPrint('[Notif] notifications error: $e');
+        _saveError = 'Cannot read saved notifications: $e';
+        _notify();
+        if (!_notifsReady.isCompleted) _notifsReady.complete();
         _resubNotifs();
       },
       cancelOnError: true,
@@ -293,7 +369,6 @@ class _NotificationProviderState extends State<NotificationProvider> {
   //   • New registration        → newUser
   //   • Account deleted         → accountDeleted
   //   • Name/email changed      → profileUpdated
-  //   • Level milestone (10+)   → levelUp
   //   • Streak milestone (7+)   → streakAchieved
   //   • Streak reset to 0       → streakBroken
   StreamSubscription _listenUsers() {
@@ -326,10 +401,28 @@ class _NotificationProviderState extends State<NotificationProvider> {
 
           if (data == null) continue;
 
-          // Cloud Functions own registration notifications.
           // ── ADDED ─────────────────────────────────────────────────
+          // Live sign-ups, plus sign-ups that happened while the admin was
+          // logged out (created after the last sync). Older users on the
+          // first load are skipped so the feed isn't flooded.
           if (change.type == DocumentChangeType.added) {
             _userSnapshots[uid] = _snapshot(data);
+
+            final created  = _docTime(data, ['createdAt', 'joinedDate']);
+            final isLive   = !_initialUserLoad;
+            final isMissed = _initialUserLoad && _isMissed(created);
+
+            if (isLive || isMissed) {
+              final name  = data['name'] ?? 'A user';
+              final email = (data['email'] ?? '').toString();
+              _add(AdminNotification(
+                id:    'user_$uid', // same id as NotificationHelper → no duplicates
+                type:  NotifType.newUser,
+                title: 'New user registered',
+                body:  '$name (${email.isEmpty ? '—' : email}) just created an account.',
+                time:  created ?? DateTime.now(),
+              ));
+            }
           }
 
           // ── MODIFIED ──────────────────────────────────────────────
@@ -339,8 +432,8 @@ class _NotificationProviderState extends State<NotificationProvider> {
             final prevStreak = prev['streak'] as int? ?? 0;
             final nowStreak  = _getStreak(data);
 
-            // Streak milestone (every 7 days)
-            final streakMilestones = [7, 14, 21, 30, 60, 100];
+            // Streak milestones
+            const streakMilestones = [7, 14, 21, 30, 60, 100];
             for (final m in streakMilestones) {
               if (prevStreak < m && nowStreak >= m) {
                 final id = 'streak_${uid}_$m';
@@ -356,7 +449,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
               }
             }
 
-            // Streak broken (went from >0 back to 0)
+            // Streak broken (went from >2 back to 0)
             if (prevStreak > 2 && nowStreak == 0) {
               final id = 'streakbroken_${uid}_${DateTime.now().millisecondsSinceEpoch}';
               _add(AdminNotification(
@@ -388,7 +481,10 @@ class _NotificationProviderState extends State<NotificationProvider> {
             _userSnapshots[uid] = _snapshot(data);
           }
         }
-        if (_initialUserLoad) _initialUserLoad = false;
+        if (_initialUserLoad) {
+          _initialUserLoad = false;
+          _initialLoadFinished();
+        }
       },
       onError: (e, s) {
         debugPrint('[Notif] users error: $e');
@@ -399,6 +495,7 @@ class _NotificationProviderState extends State<NotificationProvider> {
   }
 
   // ── 3. FEEDBACK LISTENER ──────────────────────────────────────────
+  // NOTE: change 'feedback' if your user app saves under another name.
   StreamSubscription _listenFeedback() {
     return FirebaseFirestore.instance
         .collection('feedback')
@@ -409,12 +506,18 @@ class _NotificationProviderState extends State<NotificationProvider> {
           final data = change.doc.data();
           if (data == null) continue;
 
-          final key   = change.doc.id;
-          final isNew = !_initialFeedbackLoad && !_seenFeedbackIds.contains(key);
+          final key     = change.doc.id;
+          final already = _seenFeedbackIds.contains(key);
           _seenFeedbackIds.add(key);
 
-          if (!isNew) continue;
+          if (already) continue;
           if (change.type != DocumentChangeType.added) continue;
+
+          // Live feedback, plus feedback sent while the admin was logged out.
+          final created  = _docTime(data, ['createdAt', 'date', 'timestamp']);
+          final isLive   = !_initialFeedbackLoad;
+          final isMissed = _initialFeedbackLoad && _isMissed(created);
+          if (!isLive && !isMissed) continue;
 
           final rating  = ((data['rating'] ?? 0) as num).toInt();
           final comment = (data['comment'] ?? data['feedback'] ?? '').toString();
@@ -425,10 +528,13 @@ class _NotificationProviderState extends State<NotificationProvider> {
             type:  NotifType.feedbackReceived,
             title: 'New feedback received $stars',
             body:  'A user left a $rating-star review.${comment.isNotEmpty ? ' "$comment"' : ''}',
-            time:  _ts(data['createdAt']),
+            time:  created ?? DateTime.now(),
           ));
         }
-        if (_initialFeedbackLoad) _initialFeedbackLoad = false;
+        if (_initialFeedbackLoad) {
+          _initialFeedbackLoad = false;
+          _initialLoadFinished();
+        }
       },
       onError: (e, s) {
         debugPrint('[Notif] feedback error: $e');
@@ -442,15 +548,39 @@ class _NotificationProviderState extends State<NotificationProvider> {
   void _add(AdminNotification notif) {
     if (_seenIds.contains(notif.id)) return;
     _seenIds.add(notif.id);
-    setState(() {
-      _notifications.insert(0, notif);
-      if (_notifications.length > 100) _notifications.removeLast();
-    });
+    if (mounted) {
+      setState(() {
+        _notifications.insert(0, notif);
+        if (_notifications.length > 100) _notifications.removeLast();
+      });
+    }
     _notify();
-    _notifCol.doc(notif.id).set(notif.toMap()).catchError((e) {
-      debugPrint('[Notif] persist error: $e');
-    });
+    _persist(notif);
   }
+
+  /// Saves the notification to Firestore. If a document with this id already
+  /// exists (e.g. written by the user app), it is left untouched so its
+  /// read / unread state is never overwritten.
+  Future<void> _persist(AdminNotification notif) async {
+    try {
+      final ref  = _notifCol.doc(notif.id);
+      final snap = await ref.get();
+      if (!snap.exists) await ref.set(notif.toMap());
+      if (_saveError != null) {
+        _saveError = null;
+        _notify();
+      }
+    } catch (e) {
+      debugPrint('[Notif] persist error: $e');
+      _saveError = e.toString();
+      _notify(); // refreshes the panel so the warning is visible
+    }
+  }
+
+  /// Non-null when notifications could NOT be saved to / read from Firestore
+  /// (usually Firestore security rules). Shown in the panel footer.
+  String? _saveError;
+  String? get saveError => _saveError;
 
   // ── PUBLIC ACTIONS ────────────────────────────────────────────────
   void markRead(String id) {
@@ -464,7 +594,11 @@ class _NotificationProviderState extends State<NotificationProvider> {
   void markAllRead() {
     final unread = _notifications.where((n) => !n.isRead).toList();
     if (unread.isEmpty) return;
-    setState(() { for (final n in _notifications) n.isRead = true; });
+    setState(() {
+      for (final n in _notifications) {
+        n.isRead = true;
+      }
+    });
     _notify();
     final batch = FirebaseFirestore.instance.batch();
     for (final n in unread) {
@@ -475,16 +609,19 @@ class _NotificationProviderState extends State<NotificationProvider> {
 
   // ── HELPERS ───────────────────────────────────────────────────────
   Map<String, dynamic> _snapshot(Map<String, dynamic> d) => {
-    'name':   d['name'],
-    'email':  d['email'],
-    'level':  _getLevel(d),
-    'streak': _getStreak(d),
-  };
+        'name':   d['name'],
+        'email':  d['email'],
+        'level':  _getLevel(d),
+        'streak': _getStreak(d),
+      };
 
   DateTime _ts(dynamic ts) {
     if (ts == null) return DateTime.now();
-    try { return (ts as Timestamp).toDate(); }
-    catch (_) { return DateTime.now(); }
+    try {
+      return (ts as Timestamp).toDate();
+    } catch (_) {
+      return DateTime.now();
+    }
   }
 
   @override
@@ -596,7 +733,9 @@ class _NotificationPanelState extends State<_NotificationPanel> {
     try {
       if (!widget.providerContext.mounted) return null;
       return NotificationProvider.of(widget.providerContext);
-    } catch (_) { return null; }
+    } catch (_) {
+      return null;
+    }
   }
 
   List<AdminNotification> _apply(List<AdminNotification> all) {
@@ -653,7 +792,8 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                           color:        _kAccent.withOpacity(0.1),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.notifications_rounded, color: _kAccent, size: 18),
+                        child: const Icon(Icons.notifications_rounded,
+                            color: _kAccent, size: 18),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -662,7 +802,9 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                           children: [
                             const Text('Notifications',
                                 style: TextStyle(
-                                    color: _kText, fontSize: 16, fontWeight: FontWeight.bold)),
+                                    color: _kText,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold)),
                             Text(
                               unread > 0 ? '$unread unread' : 'All caught up ✓',
                               style: TextStyle(
@@ -679,7 +821,8 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                             foregroundColor: _kAccent,
                             padding: const EdgeInsets.symmetric(horizontal: 8),
                           ),
-                          child: const Text('Mark all read', style: TextStyle(fontSize: 12)),
+                          child: const Text('Mark all read',
+                              style: TextStyle(fontSize: 12)),
                         ),
                       IconButton(
                         icon: const Icon(Icons.close_rounded, color: _kSlate),
@@ -733,17 +876,42 @@ class _NotificationPanelState extends State<_NotificationPanel> {
                     decoration: const BoxDecoration(
                       border: Border(top: BorderSide(color: _kBorder)),
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(Icons.cloud_done_rounded, color: _kSlate, size: 13),
-                        const SizedBox(width: 6),
-                        Text(
-                          'Live from Firestore · ${all.length} total',
-                          style: const TextStyle(color: _kSlate, fontSize: 11),
-                        ),
-                      ],
-                    ),
+                    child: provider?.saveError != null
+                        ? Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Icon(Icons.error_outline_rounded,
+                                    color: _kRose, size: 14),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'Not saved to Firestore — check your '
+                                    'Firestore rules for "notifications" '
+                                    'and "admin_meta".\n${provider!.saveError}',
+                                    maxLines: 4,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: _kRose, fontSize: 11),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.cloud_done_rounded,
+                                  color: _kSlate, size: 13),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Saved in Firestore · ${all.length} total',
+                                style: const TextStyle(
+                                    color: _kSlate, fontSize: 11),
+                              ),
+                            ],
+                          ),
                   ),
                 ]),
               ),
@@ -753,7 +921,6 @@ class _NotificationPanelState extends State<_NotificationPanel> {
       },
     );
   }
-
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -796,7 +963,9 @@ class _NotifTile extends StatelessWidget {
                         notif.title,
                         style: TextStyle(
                           color:      _kText,
-                          fontWeight: notif.isRead ? FontWeight.normal : FontWeight.bold,
+                          fontWeight: notif.isRead
+                              ? FontWeight.normal
+                              : FontWeight.bold,
                           fontSize:   13,
                         ),
                       ),
@@ -844,11 +1013,12 @@ class _EmptyState extends StatelessWidget {
         Container(
           width: 64, height: 64,
           decoration: BoxDecoration(
-            color:        _kBg,
-            shape:        BoxShape.circle,
-            border:       Border.all(color: _kBorder),
+            color:  _kBg,
+            shape:  BoxShape.circle,
+            border: Border.all(color: _kBorder),
           ),
-          child: const Icon(Icons.notifications_off_rounded, color: _kSlate, size: 28),
+          child: const Icon(Icons.notifications_off_rounded,
+              color: _kSlate, size: 28),
         ),
         const SizedBox(height: 16),
         Text(
